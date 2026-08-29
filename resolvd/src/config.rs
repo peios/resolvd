@@ -114,10 +114,12 @@ pub fn load() -> Config {
     config
 }
 
-/// Open the key with notify rights and arm a subtree watch.
+/// Arm a subtree watch. On `Machine\System\Network`, not `Resolver`
+/// itself: the latter need not exist at boot (the first `reg new` creates
+/// it), and a watch on a key that is not there cannot see it appear.
 pub fn watch() -> peios::Result<Key> {
     use peios::registry::NotifyFilter;
-    let key = Key::open(None, RESOLVER_KEY, KeyAccess::NOTIFY, OpenFlags::empty())?;
+    let key = Key::open(None, libnetd::NETWORK_KEY, KeyAccess::NOTIFY, OpenFlags::empty())?;
     key.notify(NotifyFilter::ALL, true)?;
     key.set_nonblocking(true)?;
     Ok(key)
