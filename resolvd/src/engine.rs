@@ -430,7 +430,19 @@ impl Engine {
                 let candidate = task.current.clone().unwrap_or_else(|| task.original.clone());
                 let scope = task.scope.clone().unwrap_or_default();
                 let outcome = if code as u8 == rcode::NXDOMAIN { Outcome::NotFound } else { Outcome::Found };
-                let records: Vec<Record> = message.answers.into_iter().filter(|r| r.class == dns::class::IN).collect();
+                // Records come back in the case we sent (0x20); give them
+                // the case the caller used.
+                let records: Vec<Record> = message
+                    .answers
+                    .into_iter()
+                    .filter(|r| r.class == dns::class::IN)
+                    .map(|mut r| {
+                        if r.name == candidate {
+                            r.name = candidate.clone();
+                        }
+                        r
+                    })
+                    .collect();
                 let ttl = if outcome == Outcome::Found && !records.is_empty() {
                     records.iter().map(|r| r.ttl).min().unwrap_or(0).min(MAX_POSITIVE_TTL)
                 } else {

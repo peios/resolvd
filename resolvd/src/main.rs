@@ -67,7 +67,9 @@ impl Resolvd {
     }
 
     fn apply_snapshot(&mut self, snapshot: Snapshot) {
-        self.engine.set_hostname(if snapshot.hostname.is_empty() { None } else { Some(&snapshot.hostname) });
+        // netd's name when it set one; else whatever the kernel has.
+        let hostname = if snapshot.hostname.is_empty() { kernel_hostname() } else { Some(snapshot.hostname.clone()) };
+        self.engine.set_hostname(hostname.as_deref());
         let scopes: Vec<Scope> = snapshot.scopes.iter().map(to_scope).collect();
         let summary: Vec<String> = scopes
             .iter()
@@ -236,6 +238,18 @@ fn to_addresses(a: &engine::Addresses) -> Addresses {
     }
 }
 
+fn kernel_hostname() -> Option<String> {
+    let mut buf = [0u8; 256];
+    // SAFETY: the buffer is live and its length is its own.
+    let rc = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) };
+    if rc != 0 {
+        return None;
+    }
+    let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    let s = String::from_utf8_lossy(&buf[..end]).into_owned();
+    if s.is_empty() || s == "(none)" { None } else { Some(s) }
+}
+
 fn notify_ready() {
     let Ok(path) = std::env::var("NOTIFY_SOCKET") else { return };
     match UnixDatagram::unbound() {
@@ -281,6 +295,7 @@ fn main() -> ExitCode {
         }
     };
     let mut engine = Engine::new(seed());
+    engine.set_hostname(kernel_hostname().as_deref());
     engine.set_fallback(config.servers.clone(), config.search.clone());
     engine.set_hosts(config.hosts.clone());
     let control = control::ControlObject::new(config.control_security.as_deref());
