@@ -1,0 +1,45 @@
+{
+  "_comment": [
+    "The resolvd service definition: what peinit starts, and how.",
+    "",
+    "Identity is LocalService: resolvd needs no privilege at all. Its one",
+    "claim on the machine -- binding 127.0.0.53:53 -- is a port reservation",
+    "granted to its service SID (resolvd-port.reg), not a capability. Note",
+    "that peinit today materialises every non-SYSTEM service identity as a",
+    "SYSTEM token carrying the service SID (boundary/linux_launch/authd.rs,",
+    "HardcodedAuthdTokenClient); the intent is recorded here so that when",
+    "service logon exists nothing about resolvd has to change.",
+    "",
+    "Readiness is Notify (0): resolvd sends READY=1 once both doors are",
+    "open. It does not wait for netd -- localhost and static names answer",
+    "with no network, and the netd channel connects when netd is there.",
+    "",
+    "RuntimeDirectories creates /run/resolvd for the native socket; resolvd",
+    "stamps its own descriptor on the socket (Everyone may connect; the",
+    "control object decides what they may do).",
+    "",
+    "RestartPolicy is Always (2): a machine without its resolver cannot name",
+    "anything, and a restart costs only the cache.",
+    "",
+    "Shipped by the resolvd package into /usr/share/regim/; inert until an",
+    "image names it in [registry] autoapply."
+  ],
+  "keys": [
+    { "path": "Machine\\System" },
+    { "path": "Machine\\System\\Services" },
+    {
+      "path": "Machine\\System\\Services\\resolvd",
+      "values": [
+        { "name": "ImagePath", "type": "sz", "data": "/usr/sbin/resolvd" },
+        { "name": "Triggers", "type": "multi", "data": ["boot"] },
+        { "name": "Identity", "type": "sz", "data": "LocalService" },
+        { "name": "Readiness", "type": "dword", "data": 0 },
+        { "name": "RuntimeDirectories", "type": "multi", "data": ["resolvd"] },
+        { "name": "RestartPolicy", "type": "dword", "data": 2 },
+        { "name": "ErrorControl", "type": "dword", "data": 0 },
+        { "name": "DisplayName", "type": "sz", "data": "Stub resolver" },
+        { "name": "Description", "type": "sz", "data": "Name resolution for every program: the native socket, the stub listener on 127.0.0.53, and the hosts NSS shim behind them" }
+      ]
+    }
+  ]
+}

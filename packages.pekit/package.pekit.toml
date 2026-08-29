@@ -1,0 +1,21 @@
+# Base metadata for the packages carved from the resolvd build tree.
+#
+#   resolvd        the stub resolver. Runs as LocalService under its own
+#                  service SID; owns the native socket and 127.0.0.53:53,
+#                  and ships the constant /etc/resolv.conf.
+#   resolv         its operator command. Owns nothing; asks over a socket.
+#   nss-peios-net  libnss_peios_net.so.2, the hosts NSS shim. Loaded into
+#                  every process that resolves a host, so its own package
+#                  with its own (tiny) dependency surface, as nss-peios is.
+#
+# Three packages, no dependencies between them declared: the shim needs *a*
+# resolver on /run/resolvd/resolv.sock, and glibc's patched hosts default
+# needs the shim (see pkgs/glibc/patches/nss) — couplings that packaging
+# cannot express honestly, so the image manifest states them instead.
+
+format = "peipkg"
+
+[package]
+version      = "{{version}}-1"
+architecture = "x86_64"
+license      = "MIT"

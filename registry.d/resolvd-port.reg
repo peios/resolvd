@@ -1,0 +1,35 @@
+{
+  "_comment": [
+    "The port reservation resolvd's stub listener needs: tcp,udp:53, granted",
+    "to SYSTEM and to resolvd's own service SID,",
+    "  S-1-5-80-3864064249-1823296737-2008945602-1354971773-2894779966",
+    "so that the reservation follows the service rather than the account it",
+    "happens to run as. A more specific selector than the kernel package's",
+    "tcp,udp:1-1023, so it wins for port 53 alone (<pkm/net.h>).",
+    "",
+    "Regenerate with tools/gen-port-seed.py; do not hand-edit the hex.",
+    "Shipped by the resolvd package into /usr/share/regim/; inert until an",
+    "image names it in [registry] autoapply."
+  ],
+  "keys": [
+    {
+      "path": "Machine\\System"
+    },
+    {
+      "path": "Machine\\System\\Network"
+    },
+    {
+      "path": "Machine\\System\\Network\\TcpIp"
+    },
+    {
+      "path": "Machine\\System\\Network\\TcpIp\\PortReservations",
+      "values": [
+        {
+          "name": "tcp,udp:53",
+          "type": "binary",
+          "data": "010004801400000020000000000000002c000000010100000000000512000000010100000000000512000000020044000200000000001400010002000101000000000005120000000000280001000200010600000000000550000000f9f050e6e14cad6cc213be777d3ac3503ed68aac"
+        }
+      ]
+    }
+  ]
+}

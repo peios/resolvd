@@ -1,0 +1,19 @@
+[package]
+name = "resolvd"
+description = "The Peios stub resolver: every door to name resolution runs one engine."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "resolvd"
+path = "src/main.rs"
+
+[dependencies]
+dns = { path = "../dns" }
+libresolv = { path = "../libresolv" }
+# The netd subscribe protocol: DNS scopes arrive on netd's control socket.
+libnetd = { path = "../../netd/libnetd" }
+libc = { workspace = true }
+peios = { workspace = true }

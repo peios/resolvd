@@ -1,0 +1,21 @@
+[package]
+name = "nss_peios_net"
+description = "The NSS shim that resolves hosts through resolvd."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# A cdylib, because glibc dlopens it by SONAME. The crate name is what makes
+# the output `libnss_peios_net.so`, which is the name glibc derives from
+# `peios_net` — the name its patched `hosts` default names.
+[lib]
+name = "nss_peios_net"
+crate-type = ["cdylib"]
+
+# libresolv and libc, and nothing else. This object is loaded into every
+# process that resolves a host, so its dependency list is the surface every
+# one of them inherits. libpeios is absent on purpose, as in nss-peios.
+[dependencies]
+libresolv = { path = "../libresolv" }
+libc = "0.2"

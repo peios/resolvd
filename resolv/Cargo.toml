@@ -1,0 +1,15 @@
+[package]
+name = "resolv"
+description = "Operator command for the Peios stub resolver."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "resolv"
+path = "src/main.rs"
+
+[dependencies]
+dns = { path = "../dns" }
+libresolv = { path = "../libresolv" }

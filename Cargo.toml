@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = ["dns", "libresolv", "resolvd", "resolv", "nss"]
+
+# resolvd is its own workspace root, like netd and authd.
+#
+#   dns        the DNS wire codec: names, messages, records. Pure — no I/O,
+#              no policy — and the most network-exposed code on the machine,
+#              so it is its own crate with its own tests and fuzz target.
+#   libresolv  the native wire on /run/resolv.sock: paths, rights, the
+#              request/reply codec. No I/O beyond framing.
+#   resolvd    the daemon: the stub resolver behind every door. Runs as
+#              LocalService under its own service SID.
+#   resolv     the operator command.
+#   nss        libnss_peios_net.so.2 — glibc's `hosts` database, forwarded
+#              to resolvd. Depends on libresolv and libc only.
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+libc = "0.2"
+peios = { path = "../peios-rs/peios" }

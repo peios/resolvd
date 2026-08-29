@@ -1,0 +1,9 @@
+[package]
+name = "dns"
+description = "DNS wire codec for the Peios stub resolver: names, messages, records. No I/O."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
