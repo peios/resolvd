@@ -53,13 +53,14 @@ export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BIND
 cargo build --release --locked --bin resolvd --bin resolv --target-dir "$PEKIT_OUT/target"
 cargo build --release --locked -p nss_peios_net --target-dir "$PEKIT_OUT/target"
 
-mkdir -p "$PEKIT_OUT/usr/sbin" "$PEKIT_OUT/usr/bin" "$PEKIT_OUT/etc"
+mkdir -p "$PEKIT_OUT/usr/sbin" "$PEKIT_OUT/usr/bin" "$PEKIT_OUT/usr/etc"
 install -m 0755 "$PEKIT_OUT/target/release/resolvd" "$PEKIT_OUT/usr/sbin/resolvd"
 install -m 0755 "$PEKIT_OUT/target/release/resolv" "$PEKIT_OUT/usr/bin/resolv"
 
-# The constant resolv.conf: a pointer to the answerer, never a copy of the
+# The constant resolv.conf, at /usr/etc -- the bottom layer of the /etc merge
+# (PSPU 5.14): a pointer to the answerer, never a copy of the
 # answer. Nothing regenerates it.
-install -m 0644 "$SRC/etc/resolv.conf" "$PEKIT_OUT/etc/resolv.conf"
+install -m 0644 "$SRC/etc/resolv.conf" "$PEKIT_OUT/usr/etc/resolv.conf"
 
 # glibc dlopens the module by literal name, libnss_peios_net.so.2, from its
 # configured --libdir (the triplet directory); see authd/pekit.toml.
