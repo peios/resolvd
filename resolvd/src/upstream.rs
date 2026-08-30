@@ -11,7 +11,7 @@ use std::io::{self, Read, Write};
 use std::net::{IpAddr, SocketAddr, TcpStream, UdpSocket};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
-use crate::engine::Txid;
+use resolvd::engine::Txid;
 
 pub const DNS_PORT: u16 = 53;
 

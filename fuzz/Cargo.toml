@@ -8,9 +8,11 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-libfuzzer-sys = "0.4"
+libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 dns = { path = "../dns" }
 libresolv = { path = "../libresolv" }
+libnetd = { path = "../../netd/libnetd" }
+resolvd = { path = "../resolvd" }
 
 [[bin]]
 name = "dns_decode"
@@ -22,6 +24,20 @@ bench = false
 [[bin]]
 name = "resolv_wire"
 path = "fuzz_targets/resolv_wire.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "engine_ops"
+path = "fuzz_targets/engine_ops.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "stub_query"
+path = "fuzz_targets/stub_query.rs"
 test = false
 doc = false
 bench = false

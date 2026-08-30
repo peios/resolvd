@@ -313,7 +313,6 @@ impl Engine {
         self.txs.values().map(|t| t.deadline).min()
     }
 
-    #[cfg(test)]
     pub fn in_flight(&self) -> usize {
         self.txs.len()
     }
@@ -424,11 +423,13 @@ impl Engine {
                 let scope = task.scope.clone().unwrap_or_default();
                 let outcome = if code as u8 == rcode::NXDOMAIN { Outcome::NotFound } else { Outcome::Found };
                 // Records come back in the case we sent (0x20); give them
-                // the case the caller used.
+                // the case the caller used. A negative answer carries none:
+                // records riding on an NXDOMAIN are a server's mistake or a
+                // forger's payload, and neither is an answer.
                 let records: Vec<Record> = message
                     .answers
                     .into_iter()
-                    .filter(|r| r.class == dns::class::IN)
+                    .filter(|r| r.class == dns::class::IN && outcome == Outcome::Found)
                     .map(|mut r| {
                         if r.name == candidate {
                             r.name = candidate.clone();

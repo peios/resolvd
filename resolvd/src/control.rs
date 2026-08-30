@@ -22,7 +22,7 @@ use peios::access::AccessCheck;
 use peios::security::{AccessMask, AceFlags, AclBuilder, GenericMapping, SdBuilder, SecurityDescriptor, Sid, WellKnown};
 use peios::token::Token;
 
-use crate::log;
+use resolvd::log;
 
 const DIRECTORY_MODE: u32 = 0o755;
 const SOCKET_MODE: u32 = 0o666;

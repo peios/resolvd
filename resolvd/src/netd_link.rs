@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 
 use libnetd::{CONTROL_SOCKET_PATH, MAX_MESSAGE_BYTES, Reply, Request, Snapshot};
 
-use crate::log;
+use resolvd::log;
 
 const MIN_BACKOFF: Duration = Duration::from_millis(500);
 const MAX_BACKOFF: Duration = Duration::from_secs(10);

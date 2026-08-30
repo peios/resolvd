@@ -201,7 +201,7 @@ fn send_tcp(stream: &mut TcpStream, message: &[u8]) {
 
 /// Decode a query, or produce the error reply it deserves. `Err(None)` is
 /// "not even answerable" — not a query, or undecodable.
-fn parse_query(bytes: &[u8]) -> Result<Message, Option<Vec<u8>>> {
+pub fn parse_query(bytes: &[u8]) -> Result<Message, Option<Vec<u8>>> {
     let message = Message::decode(bytes).map_err(|_| {
         // Enough of a header to echo the id back with FORMERR.
         if bytes.len() >= 12 {
