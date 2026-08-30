@@ -6,14 +6,12 @@
 //! [`engine::Engine`] and sends back whatever it says; nothing here decides
 //! an answer.
 
-mod cache;
 mod config;
 mod control;
-mod engine;
-mod log;
 mod netd_link;
-mod stub;
 mod upstream;
+
+use resolvd::{engine, log, stub};
 
 use std::collections::HashMap;
 use std::net::IpAddr;

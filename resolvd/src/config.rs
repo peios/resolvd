@@ -12,7 +12,7 @@ use dns::Name;
 use libresolv::RESOLVER_KEY;
 use peios::registry::{Key, KeyAccess, OpenFlags, RegValue, ValueType};
 
-use crate::log;
+use resolvd::log;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
