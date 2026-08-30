@@ -1,5 +1,5 @@
-# Guest-side smoke test for resolvd on dist/prod. Run with
-#   dist/prod/drive.py --no-disk --share <dir> --timeout 260 --cmdline-extra 'loglevel=7 ignore_loglevel' <dir>/prod-smoke.sh
+# Guest-side smoke test for resolvd on a peiso-built image (dist/release). Run with
+#   dist/release/drive.py --no-disk --share <dir> --timeout 260 --cmdline-extra 'loglevel=7 ignore_loglevel' <dir>/prod-smoke.sh
 # with probe-glibc and probe-musl (see probe.rs) copied into <dir>, and read
 # <dir>/resolvd-report.txt plus the resolvd: lines on the console.
 {
