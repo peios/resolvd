@@ -748,3 +748,66 @@ mod tests {
         assert!(matches!(recv(&mut &big[..]), Err(WireError::TooLarge(_))));
     }
 }
+
+#[cfg(test)]
+mod fuzz_tests {
+    //! Noise and mutations through every decoder; nothing may panic and
+    //! whatever decodes must round-trip. `RESOLV_FUZZ_ITERS` raises the
+    //! count; the cargo-fuzz target in `fuzz/` is the real campaign.
+    use super::*;
+
+    struct Rng(u64);
+    impl Rng {
+        fn next(&mut self) -> u64 {
+            let mut x = self.0;
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            self.0 = x;
+            x.wrapping_mul(0x2545_F491_4F6C_DD1D)
+        }
+        fn below(&mut self, n: usize) -> usize {
+            (self.next() % n.max(1) as u64) as usize
+        }
+    }
+
+    #[test]
+    fn fuzz_decoders_never_panic() {
+        let iters: usize = std::env::var("RESOLV_FUZZ_ITERS").ok().and_then(|s| s.parse().ok()).unwrap_or(20_000);
+        let mut rng = Rng(0xc0de);
+        let seeds: Vec<Vec<u8>> = vec![
+            Request::Resolve { name: "a.example".into(), rtype: 1, no_cache: true }.encode(),
+            Request::Lookup { name: "x".into(), family: Family::V6 }.encode(),
+            Request::Reverse { address: "10.0.0.1".parse().unwrap() }.encode(),
+            Reply::Answer(Answer { records: vec![RecordOut { name: "a".into(), rtype: 1, ttl: 1, data: vec![1], text: "t".into() }], ..Default::default() }).encode(),
+            Reply::Status(StatusReport { scopes: vec![ScopeStatus::default()], ..Default::default() }).encode(),
+            Reply::Addresses(Addresses { addresses: vec![AddressOut { address: "::1".parse().unwrap(), ttl: 2 }], ..Default::default() }).encode(),
+        ];
+        for _ in 0..iters {
+            let mut bytes = if rng.below(4) == 0 {
+                (0..rng.below(200)).map(|_| rng.next() as u8).collect()
+            } else {
+                seeds[rng.below(seeds.len())].clone()
+            };
+            for _ in 0..1 + rng.below(5) {
+                if bytes.is_empty() {
+                    break;
+                }
+                let at = rng.below(bytes.len());
+                match rng.below(3) {
+                    0 => bytes[at] = rng.next() as u8,
+                    1 => bytes.truncate(at),
+                    _ => bytes.insert(at, rng.next() as u8),
+                }
+            }
+            if let Ok(r) = Request::decode(&bytes) {
+                assert_eq!(Request::decode(&r.encode()).unwrap(), r);
+            }
+            if let Ok(r) = Reply::decode(&bytes) {
+                let _ = Reply::decode(&r.encode()).unwrap();
+            }
+            let _ = msgpack::Reader::new(&bytes).skip();
+            let _ = recv(&mut &bytes[..]);
+        }
+    }
+}

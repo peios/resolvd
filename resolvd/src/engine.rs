@@ -58,8 +58,9 @@ pub const DEMOTION: Duration = Duration::from_secs(30);
 pub const MAX_POSITIVE_TTL: u32 = 86_400;
 /// Negative answers (RFC 2308) at most this long.
 pub const MAX_NEGATIVE_TTL: u32 = 300;
-/// A ceiling on outstanding questions; beyond it new ones are refused
-/// rather than queued without bound.
+/// A ceiling on outstanding upstream transactions (each is a socket);
+/// beyond it a question that needs the network is refused rather than
+/// queued without bound. Synthetic and cached answers are never refused.
 pub const MAX_IN_FLIGHT: usize = 4096;
 
 /// What an interface contributes.
@@ -314,7 +315,7 @@ impl Engine {
 
     #[cfg(test)]
     pub fn in_flight(&self) -> usize {
-        self.tasks.len()
+        self.txs.len()
     }
 
     // ------------------------------------------------------------ questions
@@ -324,10 +325,6 @@ impl Engine {
         let Some(name) = Name::parse(name).ok() else {
             return vec![Action::Done { qid, completion: Completion::Answer(Answer { outcome: Outcome::NotFound, ..Default::default() }) }];
         };
-        if self.tasks.len() >= MAX_IN_FLIGHT {
-            self.counters.refused += 1;
-            return vec![Action::Done { qid, completion: Completion::Answer(Answer { outcome: Outcome::Unavailable, ..Default::default() }) }];
-        }
         let id = self.start_task(Owner::Resolve(qid), name, rtype, no_cache);
         self.advance(id, now)
     }
@@ -341,10 +338,6 @@ impl Engine {
         let Some(name) = Name::parse(name).ok() else {
             return vec![Action::Done { qid, completion: Completion::Addresses(Addresses { outcome: Outcome::NotFound, ..Default::default() }) }];
         };
-        if self.tasks.len() + 2 > MAX_IN_FLIGHT {
-            self.counters.refused += 1;
-            return vec![Action::Done { qid, completion: Completion::Addresses(Addresses { outcome: Outcome::Unavailable, ..Default::default() }) }];
-        }
         let types: &[u16] = match family {
             Family::Any => &[rtype::A, rtype::AAAA],
             Family::V4 => &[rtype::A],
@@ -613,6 +606,10 @@ impl Engine {
         }
         let servers = self.servers_of(&scope_id, now);
         if servers.is_empty() {
+            return self.settle(id, Answer { outcome: Outcome::Unavailable, ..Default::default() }, now);
+        }
+        if attempt == 0 && self.txs.len() >= MAX_IN_FLIGHT {
+            self.counters.refused += 1;
             return self.settle(id, Answer { outcome: Outcome::Unavailable, ..Default::default() }, now);
         }
         // A server not yet asked, healthiest first; else round-robin.
@@ -1206,6 +1203,91 @@ mod tests {
         assert_eq!(actions, vec![Action::Cancel { tx }]);
         assert_eq!(e.in_flight(), 0);
         assert!(e.received(tx, b"", now).is_empty());
+    }
+
+    #[test]
+    fn a_reply_with_the_wrong_question_or_a_dead_transaction_is_ignored() {
+        let mut e = engine();
+        let now = Instant::now();
+        let (tx, _, q) = sent(&e.resolve(1, "www.example.com", rtype::A, false, now));
+        let mut wrong_type = q.clone();
+        wrong_type.questions[0].rtype = rtype::AAAA;
+        assert!(e.received(tx, &reply(&wrong_type, vec![], 0), now).is_empty());
+        let mut two_questions = q.clone();
+        two_questions.questions.push(q.questions[0].clone());
+        assert!(e.received(tx, &reply(&two_questions, vec![], 0), now).is_empty());
+        let mut not_a_response = q.clone();
+        not_a_response.header.response = false;
+        assert!(e.received(tx, &not_a_response.encode().unwrap(), now).is_empty());
+        // Answered once; the same bytes again hit a dead transaction.
+        let ok = reply(&q, vec![Record::new(n("www.example.com"), 5, RData::A("1.2.3.4".parse().unwrap()))], 0);
+        assert!(!e.received(tx, &ok, now).is_empty());
+        assert!(e.received(tx, &ok, now).is_empty());
+        assert!(e.received(tx + 1000, &ok, now).is_empty());
+    }
+
+    #[test]
+    fn in_flight_is_bounded_and_refused_beyond_it() {
+        let mut e = engine();
+        let now = Instant::now();
+        for i in 0..MAX_IN_FLIGHT as u64 {
+            let actions = e.resolve(i, &format!("h{i}.example.com"), rtype::A, false, now);
+            assert!(matches!(actions[0], Action::Send { .. }));
+        }
+        let a = done(&e.resolve(u64::MAX, "one-more.example.com", rtype::A, false, now));
+        assert_eq!(a.outcome, Outcome::Unavailable);
+        assert_eq!(e.counters.refused, 1);
+        // Synthetic names still answer under load.
+        let a = done(&e.resolve(u64::MAX - 1, "localhost", rtype::A, false, now));
+        assert_eq!(a.outcome, Outcome::Found);
+        // Timeouts drain it.
+        let actions = e.tick(now + SERVER_TIMEOUT * 4);
+        assert!(actions.len() >= MAX_IN_FLIGHT);
+    }
+
+    #[test]
+    fn hostile_ttls_and_missing_soa_are_bounded() {
+        let mut e = engine();
+        let now = Instant::now();
+        let (tx, _, q) = sent(&e.resolve(1, "long.example.com", rtype::A, false, now));
+        let rec = Record::new(n("long.example.com"), u32::MAX, RData::A("1.2.3.4".parse().unwrap()));
+        done(&e.received(tx, &reply(&q, vec![rec], 0), now));
+        // Cached, but not forever.
+        let a = done(&e.resolve(2, "long.example.com", rtype::A, false, now + Duration::from_secs(u64::from(MAX_POSITIVE_TTL) - 1)));
+        assert_eq!(a.source, Source::Cache);
+        sent(&e.resolve(3, "long.example.com", rtype::A, false, now + Duration::from_secs(u64::from(MAX_POSITIVE_TTL) + 1)));
+        // NXDOMAIN with no SOA: not cached at all.
+        let (tx, _, q) = sent(&e.resolve(4, "gone.example.com", rtype::A, false, now));
+        done(&e.received(tx, &reply(&q, vec![], rcode::NXDOMAIN), now));
+        sent(&e.resolve(5, "gone.example.com", rtype::A, false, now + Duration::from_secs(1)));
+        // An NXDOMAIN whose SOA claims a week: capped to minutes.
+        let (tx, _, q) = sent(&e.resolve(6, "neg.example.com", rtype::A, false, now));
+        let mut m = Message::reply_to(&q);
+        m.header.rcode = rcode::NXDOMAIN;
+        m.authority.push(Record::new(n("example.com"), 604800, RData::Soa { mname: n("a"), rname: n("b"), serial: 1, refresh: 1, retry: 1, expire: 1, minimum: 604800 }));
+        done(&e.received(tx, &m.encode().unwrap(), now));
+        sent(&e.resolve(7, "neg.example.com", rtype::A, false, now + Duration::from_secs(u64::from(MAX_NEGATIVE_TTL) + 1)));
+    }
+
+    #[test]
+    fn a_cname_loop_in_a_lookup_terminates() {
+        let mut e = engine();
+        let now = Instant::now();
+        let actions = e.lookup(1, "loop.example.com", Family::V4, now);
+        let (tx, _, q) = sent(&actions);
+        let records = vec![
+            Record::new(n("loop.example.com"), 60, RData::Cname(n("a.example.com"))),
+            Record::new(n("a.example.com"), 60, RData::Cname(n("b.example.com"))),
+            Record::new(n("b.example.com"), 60, RData::Cname(n("a.example.com"))),
+        ];
+        let actions = e.received(tx, &reply(&q, records, 0), now);
+        match &actions[0] {
+            Action::Done { completion: Completion::Addresses(a), .. } => {
+                assert_eq!(a.outcome, Outcome::Found);
+                assert!(a.addresses.is_empty());
+            }
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

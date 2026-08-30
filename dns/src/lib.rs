@@ -1024,3 +1024,6 @@ mod tests {
         assert_eq!(rtype::name(65), "TYPE65");
     }
 }
+
+#[cfg(test)]
+mod fuzz_tests;

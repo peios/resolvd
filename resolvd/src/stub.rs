@@ -91,11 +91,13 @@ impl Stub {
         out
     }
 
-    pub fn accept(&mut self, now: Instant) {
+    /// Accept waiting TCP clients, up to `limit` held at once; beyond it
+    /// they are closed at once rather than queued.
+    pub fn accept(&mut self, now: Instant, limit: usize) {
         loop {
             match self.tcp.accept() {
                 Ok((stream, peer)) => {
-                    if !peer.ip().is_loopback() || stream.set_nonblocking(true).is_err() {
+                    if self.clients.len() >= limit || !peer.ip().is_loopback() || stream.set_nonblocking(true).is_err() {
                         continue;
                     }
                     let id = self.next_client;
