@@ -30,6 +30,12 @@ use peios::registry::Key;
 use engine::{Action, Completion, Engine, Qid, Scope};
 use stub::{Incoming, Origin};
 
+/// Connections still delivering a request, and stub TCP clients, are
+/// bounded so a local flood exhausts a counter rather than descriptors.
+/// Beyond it, accepts are dropped until one drains; the engine's own
+/// in-flight ceiling bounds the upstream sockets.
+const MAX_PENDING_CLIENTS: usize = 256;
+
 /// Who is waiting for `qid`.
 enum Waiter {
     Native(UnixStream),
@@ -381,7 +387,7 @@ fn main() -> ExitCode {
             r.handle_stub(incoming, now);
         }
         if fds[2].revents != 0 {
-            r.stub.accept(now);
+            r.stub.accept(now, MAX_PENDING_CLIENTS);
         }
         for (id, slot) in &stub_slots {
             if fds[*slot].revents != 0 {
@@ -394,6 +400,10 @@ fn main() -> ExitCode {
             loop {
                 match listener.accept() {
                     Ok((stream, _)) => {
+                        if r.clients.len() >= MAX_PENDING_CLIENTS {
+                            drop(stream);
+                            continue;
+                        }
                         if let Some(client) = control::Client::new(stream, now) {
                             let id = r.fresh_id();
                             r.clients.insert(id, client);
