@@ -47,7 +47,30 @@ pub fn listen() -> io::Result<UnixListener> {
     Ok(listener)
 }
 
-/// Everyone may connect; the object check decides what they may do.
+/// Let everyone reach the socket; the object check decides what they may do.
+///
+/// **The DACL only.** This used to set the owner to SYSTEM as well, and
+/// that is the one thing a LocalService process cannot do: making somebody
+/// else the owner of an object needs a privilege resolvd does not have and
+/// should not have. `set_sd` is all-or-nothing, so asking for the owner
+/// failed the whole call with `EPERM` and the DACL was never written
+/// either — leaving `resolv.sock` at `O:LSG:LS` with no DACL component at
+/// all, and `/run/resolvd` carrying only peinit's descriptor, which admits
+/// SYSTEM, Administrators and this service and nobody else.
+///
+/// That mattered here more than anywhere: this is the socket every program
+/// on the machine uses to resolve a name, and an ordinary client could not
+/// traverse the directory to reach it. Resolution kept working through the
+/// other two doors — `127.0.0.53` and the NSS shim — which is why nothing
+/// obviously broke and the defect sat here since resolvd shipped.
+///
+/// It failed silently because the error only went to the log, and a
+/// LocalService daemon's lines do not reach the console (PEI-581);
+/// `evctl 'LOGS FROM resolvd'` had them all along. PEI-329 recorded the
+/// symptom — a NULL DACL on the socket — and guessed it was benign.
+///
+/// The owner is left as whoever created the object, which is resolvd: the
+/// correct answer, and what it already was.
 fn protect(path: &Path) {
     use peios::file::SecInfo;
     let system = Sid::well_known(WellKnown::System);
@@ -60,11 +83,15 @@ fn protect(path: &Path) {
             AceFlags::empty(),
         )
         .build()
-        .and_then(|dacl| SdBuilder::new().owner(system.as_ref()).group(system.as_ref()).dacl(&dacl).build());
+        .and_then(|dacl| SdBuilder::new().dacl(&dacl).build());
     match descriptor {
         Ok(sd) => {
-            if let Err(e) = peios::file::set_sd(None, path, SecInfo::OWNER | SecInfo::GROUP | SecInfo::DACL, &sd, 0) {
-                log::error(format_args!("could not set a descriptor on {}: {e}", path.display()));
+            if let Err(e) = peios::file::set_sd(None, path, SecInfo::DACL, &sd, 0) {
+                log::error(format_args!(
+                    "could not set a descriptor on {} ({e}); programs other than SYSTEM and \
+                     administrators will not be able to reach the socket",
+                    path.display()
+                ));
             }
         }
         Err(e) => log::warn(format_args!("could not build a descriptor: {e}")),
