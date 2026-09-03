@@ -1,52 +1,55 @@
---- machine\system\network\resolver
-canonical: Machine\System\Network\Resolver
+--- machine\system\network\dns
+canonical: Machine\System\Network\Dns
 
-resolvd's configuration. Everything here is a fallback or an override:
-the live facts — which interface has which servers and search domains,
-which carries the default route — come from netd over its control socket
-and are never written to the registry. resolvd reads this key whole on
-start and on every change.
+Name resolution's machine-wide values, read by resolvd. Everything here
+is a fallback or an addition: the live facts — which interface has which
+servers and search domains, which carries the default route, which is
+exclusive — come from the interface's profile (`Profiles\<path>`, the
+`Dns.*` values) by way of netd's control socket, and are never written
+here. resolvd reads this key whole on start and on every change.
 
 Default security: inherits the Machine hive root (SYSTEM and Administrators
 full, Authenticated Users read).
 
---- machine\system\network\resolver servers
-canonical: Machine\System\Network\Resolver Servers
+--- machine\system\network\dns fallbackservers
+canonical: Machine\System\Network\Dns FallbackServers
 type: REG_MULTI_SZ
 default: (none)
 applies: live
 
 Servers to use when no interface supplies any — a machine with a static
-address and no DNS in its profile, or nothing but a link-local address.
-Never consulted while any interface contributes servers; this is not a
-"public resolver as well" setting.
+address and no `Dns.Servers` in its profile, or nothing but a link-local
+address. Never consulted while any interface contributes servers; this is
+not a "public resolver as well" setting.
 
---- machine\system\network\resolver searchdomains
-canonical: Machine\System\Network\Resolver SearchDomains
+--- machine\system\network\dns extrasearchdomains
+canonical: Machine\System\Network\Dns ExtraSearchDomains
 type: REG_MULTI_SZ
 default: (none)
 applies: live
 
 Search domains applied to single-label names after every interface's own,
-in order. A single-label name with no applicable domain is `NotFound`
-without a query; it is never sent bare upstream.
+in order, whether or not any interface supplied some. A single-label name
+with no applicable domain is `NotFound` without a query; it is never sent
+bare upstream.
 
---- machine\system\network\resolver controlsecurity
-canonical: Machine\System\Network\Resolver ControlSecurity
+--- machine\system\network\dns controlsecurity
+canonical: Machine\System\Network\Dns ControlSecurity
 type: REG_BINARY
 default: Everyone: RESOLVER_QUERY; SYSTEM, Administrators: all
 applies: live
 
-The resolvd control object's descriptor, self-relative. Checked against
-the peer's token on every request to `/run/resolvd/resolv.sock`. Rights:
-`RESOLVER_QUERY` (0x1) for `resolve`, `lookup`, `reverse` and `status`;
-`RESOLVER_CONTROL` (0x2) for `flush`. Absent or malformed, the compiled
-default above applies. The stub listener on 127.0.0.53 is not governed by
-this object: DNS carries no caller identity, so that door is anonymous
-and everything on the machine may ask.
+resolvd's own: the control object's descriptor, self-relative, kept with
+the rest of the surface rather than part of the network policy layout.
+Checked against the peer's token on every request to
+`/run/resolvd/resolv.sock`. Rights: `RESOLVER_QUERY` (0x1) for `resolve`,
+`lookup`, `reverse` and `status`; `RESOLVER_CONTROL` (0x2) for `flush`.
+Absent or malformed, the compiled default above applies. The stub listener
+on 127.0.0.53 is not governed by this object: DNS carries no caller
+identity, so that door is anonymous and everything on the machine may ask.
 
---- machine\system\network\resolver\hosts
-canonical: Machine\System\Network\Resolver\Hosts
+--- machine\system\network\dns\hosts
+canonical: Machine\System\Network\Dns\Hosts
 
 Static names: the value name is the hostname, the data an address
 (REG_SZ) or several (REG_MULTI_SZ). An exact, case-insensitive match
@@ -54,12 +57,3 @@ wins over DNS and is answered at every door — the native socket, the NSS
 shim, and the stub listener alike, so a Go binary that speaks DNS itself
 sees the same answer. Reverse lookups of these addresses return the name.
 This is what `/etc/hosts` was; there is no `/etc/hosts` on Peios.
-
---- machine\system\network\resolver\policy
-canonical: Machine\System\Network\Resolver\Policy
-
-Reserved for transport and validation policy — `DNSSEC`, `DNSOverTLS`,
-`mDNS` — none of which resolvd v1 implements (PEI-501). Values here are
-read and ignored, so an image may set its intent ahead of the
-implementation. `.local` is never forwarded to DNS (RFC 6762) and LLMNR is
-never spoken.

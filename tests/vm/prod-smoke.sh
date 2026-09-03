@@ -13,14 +13,14 @@
   echo "== AAAA + lookup"; resolv query example.com AAAA; resolv lookup www.example.com
   echo "== nxdomain"; resolv query does-not-exist.invalid; echo "exit=$?"; resolv query does-not-exist.invalid; echo "exit=$? (cached)"
   echo "== single label, no domain"; resolv query printer; echo "exit=$?"
-  echo "== hosts"; reg new Machine/System/Network/Resolver; reg new Machine/System/Network/Resolver/Hosts; reg set Machine/System/Network/Resolver/Hosts printer 10.0.2.9; sleep 2; resolv query printer; resolv reverse 10.0.2.9; resolv lookup PRINTER
-  echo "== search domain expansion"; reg set Machine/System/Network/Profiles/ethernet/DNS SearchDomains multi:example.com; sleep 4; resolv status | head -12; resolv query www; echo "exit=$?"
+  echo "== hosts"; reg new Machine/System/Network/Dns; reg new Machine/System/Network/Dns/Hosts; reg set Machine/System/Network/Dns/Hosts printer 10.0.2.9; sleep 2; resolv query printer; resolv reverse 10.0.2.9; resolv lookup PRINTER
+  echo "== search domain expansion"; reg set Machine/System/Network/Profiles/default Dns.Domains multi:example.com; sleep 4; resolv status | head -12; resolv query www; echo "exit=$?"
   echo "== dot-local"; resolv query thing.local; echo "exit=$?"
   echo "== flush"; resolv flush; echo "exit=$?"; resolv status | tail -1
   echo "== stub door (raw DNS)"; /share/probe-musl dns 127.0.0.53 example.com; /share/probe-musl dns 127.0.0.53 www; /share/probe-musl dns 127.0.0.53 printer; /share/probe-musl dns 127.0.0.53 nope.invalid
   echo "== musl getaddrinfo via resolv.conf"; /share/probe-musl gai example.com; /share/probe-musl gai printer; /share/probe-musl gai localhost
   echo "== glibc getaddrinfo via libnss_peios_net"; /share/probe-glibc gai example.com; /share/probe-glibc gai printer; /share/probe-glibc gai localhost; /share/probe-glibc gai nope.invalid; /share/probe-glibc gai www
   echo "== nss module present"; ls -l /usr/lib/x86_64-linux-peios/libnss_peios_net.so.2
-  echo "== fallback servers"; reg set Machine/System/Network/Resolver Servers multi:10.0.2.3; sleep 2; resolv status | tail -4
+  echo "== fallback servers"; reg set Machine/System/Network/Dns FallbackServers multi:10.0.2.3; sleep 2; resolv status | tail -4
   echo "== final status"; resolv status
 } > /share/resolvd-report.txt 2>&1

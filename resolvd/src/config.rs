@@ -1,4 +1,4 @@
-//! `Machine\System\Network\Resolver`: what the registry tells resolvd.
+//! `Machine\System\Network\Dns`: what the registry tells resolvd.
 //!
 //! Read whole on start and on every watch event. Everything here is a
 //! fallback or an override; the live facts — which interface has which
@@ -16,9 +16,10 @@ use resolvd::log;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Config {
-    /// `Servers`: used only when no interface supplies any.
+    /// `FallbackServers`: used only when no interface supplies any.
     pub servers: Vec<IpAddr>,
-    /// `SearchDomains`: applied to single labels after every interface's.
+    /// `ExtraSearchDomains`: applied to single labels after every
+    /// interface's own.
     pub search: Vec<Name>,
     /// `Hosts\`: value name = hostname, data = address(es). Exact match,
     /// wins over DNS; answered at every door.
@@ -79,13 +80,13 @@ pub fn load() -> Config {
     let Some(root) = open(None, RESOLVER_KEY) else {
         return config;
     };
-    config.servers = addresses(&read_multi(&root, "Servers"), "Resolver Servers");
-    config.search = read_multi(&root, "SearchDomains")
+    config.servers = addresses(&read_multi(&root, "FallbackServers"), "Dns FallbackServers");
+    config.search = read_multi(&root, "ExtraSearchDomains")
         .iter()
         .filter_map(|d| {
             let r = Name::parse(d).ok().filter(|n| !n.is_root());
             if r.is_none() {
-                log::warn(format_args!("Resolver SearchDomains: ignoring malformed domain {d:?}"));
+                log::warn(format_args!("Dns ExtraSearchDomains: ignoring malformed domain {d:?}"));
             }
             r
         })
@@ -98,14 +99,14 @@ pub fn load() -> Config {
             let Ok(v) = v else { continue };
             let Ok(name) = String::from_utf8(v.name.clone()) else { continue };
             let Ok(name) = Name::parse(&name) else {
-                log::warn(format_args!("Resolver Hosts: ignoring malformed name {name:?}"));
+                log::warn(format_args!("Dns Hosts: ignoring malformed name {name:?}"));
                 continue;
             };
             if name.is_root() {
                 continue;
             }
             let value = RegValue { sequence: 0, ty: v.ty, data: v.data.clone(), layer: Vec::new() };
-            let addrs = addresses(&multi(&value).unwrap_or_default(), "Resolver Hosts");
+            let addrs = addresses(&multi(&value).unwrap_or_default(), "Dns Hosts");
             if !addrs.is_empty() {
                 config.hosts.insert(name, addrs);
             }
@@ -114,7 +115,7 @@ pub fn load() -> Config {
     config
 }
 
-/// Arm a subtree watch. On `Machine\System\Network`, not `Resolver`
+/// Arm a subtree watch. On `Machine\System\Network`, not `Dns`
 /// itself: the latter need not exist at boot (the first `reg new` creates
 /// it), and a watch on a key that is not there cannot see it appear.
 pub fn watch() -> peios::Result<Key> {
