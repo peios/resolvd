@@ -44,11 +44,11 @@ pub const STUB_ADDRESS: &str = "127.0.0.53";
 pub const STUB_PORT: u16 = 53;
 
 /// The registry key resolvd reads.
-pub const RESOLVER_KEY: &str = "Machine\\System\\Network\\Resolver";
+pub const RESOLVER_KEY: &str = "Machine\\System\\Network\\Dns";
 
 /// Rights on the resolvd control object.
 ///
-/// Checked against `Machine\System\Network\Resolver ControlSecurity` when it
+/// Checked against `Machine\System\Network\Dns ControlSecurity` when it
 /// exists, else the compiled default: Everyone may query, SYSTEM and
 /// Administrators may control.
 pub const RESOLVER_QUERY: u32 = 0x0000_0001;

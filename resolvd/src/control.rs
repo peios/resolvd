@@ -1,7 +1,7 @@
 //! The native door: `/run/resolvd/resolv.sock`, one request per connection,
 //! authorised against the resolvd control object.
 //!
-//! The object is `Machine\System\Network\Resolver ControlSecurity` when set,
+//! The object is `Machine\System\Network\Dns ControlSecurity` when set,
 //! else a compiled default — Everyone may query, SYSTEM and Administrators
 //! may control. The check is a KACS access check against the peer's token,
 //! never `SO_PEERCRED`. The peer's SID is also what identity-aware policy
