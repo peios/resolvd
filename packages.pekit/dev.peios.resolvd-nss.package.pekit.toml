@@ -5,11 +5,7 @@
 name        = "dev.peios.resolvd-nss"
 description = "Peios NSS host-resolution client module"
 
-[provides]
-nss-peios-net = "{{version}}-7"
 
-[replaces]
-nss-peios-net = "<= 0.1.0-6"
 
 [files]
 "@source:LICENSE"                                               = "usr/share/licenses/dev.peios.resolvd-nss/LICENSE"
