@@ -24,11 +24,10 @@ publish = false
 
 [workspace.dependencies]
 libc = "0.2.189"
-# These sibling paths keep the unreleased workspace buildable. The production
-# release replaces both this edge and resolvd's libnetd edge with immutable git
-# revisions together; pinning only one creates two incompatible peios-sys
-# instances because both link the same native ABI.
-peios = { path = "../peios-rs/peios" }
+# Keep this exact revision identical to libnetd's edge. Cargo rejects two
+# peios-sys packages which both declare links = "peios", and accepting a
+# mutable sibling here would also make the source lock incomplete.
+peios = { git = "https://github.com/peios/peios-rs.git", rev = "f4309f78fbaa878a14429a5e07d778dba9ddfab7", package = "peios" }
 
 [profile.release]
 codegen-units = 1
