@@ -1,0 +1,16 @@
+# Loaded into every POSIX process that resolves a host. Keeping this minimal
+# client shim separate from the daemon makes its process-wide attack surface
+# explicit and independently deployable.
+[package]
+name        = "dev.peios.resolvd-nss"
+description = "Peios NSS host-resolution client module"
+
+[provides]
+nss-peios-net = "{{version}}-7"
+
+[replaces]
+nss-peios-net = "<= 0.1.0-6"
+
+[files]
+"@source:LICENSE"                                               = "usr/share/licenses/dev.peios.resolvd-nss/LICENSE"
+":usr/lib/x86_64-linux-peios/libnss_peios_net.so.2"             = "usr/lib/x86_64-linux-peios/libnss_peios_net.so.2"

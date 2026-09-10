@@ -26,7 +26,11 @@ pub struct CacheKey {
 
 impl CacheKey {
     pub fn new(name: &Name, rtype: u16, scope: &str) -> CacheKey {
-        CacheKey { name: name.to_lowercase(), rtype, scope: scope.to_owned() }
+        CacheKey {
+            name: name.to_lowercase(),
+            rtype,
+            scope: scope.to_owned(),
+        }
     }
 }
 
@@ -53,6 +57,10 @@ impl Cache {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     /// A live entry, with its records' TTLs reduced by the time in cache.
     pub fn get(&self, key: &CacheKey, now: Instant) -> Option<Entry> {
         let e = self.entries.get(key)?;
@@ -70,11 +78,20 @@ impl Cache {
     pub fn insert(&mut self, key: CacheKey, entry: Entry) {
         if self.entries.len() >= MAX_ENTRIES && !self.entries.contains_key(&key) {
             let now = entry.expires; // any instant works for a sweep
-            self.entries.retain(|_, e| e.expires > now.checked_sub(std::time::Duration::from_secs(1)).unwrap_or(now));
-            if self.entries.len() >= MAX_ENTRIES {
-                if let Some(victim) = self.entries.iter().min_by_key(|(_, e)| e.expires).map(|(k, _)| k.clone()) {
-                    self.entries.remove(&victim);
-                }
+            self.entries.retain(|_, e| {
+                e.expires
+                    > now
+                        .checked_sub(std::time::Duration::from_secs(1))
+                        .unwrap_or(now)
+            });
+            if self.entries.len() >= MAX_ENTRIES
+                && let Some(victim) = self
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, e)| e.expires)
+                    .map(|(k, _)| k.clone())
+            {
+                self.entries.remove(&victim);
             }
         }
         self.entries.insert(key, entry);
@@ -95,7 +112,13 @@ mod tests {
     use std::time::Duration;
 
     fn entry(expires: Instant) -> Entry {
-        Entry { outcome: Outcome::Found, records: vec![], rcode: 0, server: "10.0.0.1".parse().unwrap(), expires }
+        Entry {
+            outcome: Outcome::Found,
+            records: vec![],
+            rcode: 0,
+            server: "10.0.0.1".parse().unwrap(),
+            expires,
+        }
     }
 
     #[test]
@@ -104,9 +127,21 @@ mod tests {
         let now = Instant::now();
         let k = CacheKey::new(&Name::parse("A.example").unwrap(), 1, "lan");
         c.insert(k.clone(), entry(now + Duration::from_secs(10)));
-        assert!(c.get(&CacheKey::new(&Name::parse("a.EXAMPLE").unwrap(), 1, "lan"), now).is_some());
+        assert!(
+            c.get(
+                &CacheKey::new(&Name::parse("a.EXAMPLE").unwrap(), 1, "lan"),
+                now
+            )
+            .is_some()
+        );
         assert!(c.get(&k, now + Duration::from_secs(10)).is_none());
-        assert!(c.get(&CacheKey::new(&Name::parse("a.example").unwrap(), 1, "vpn"), now).is_none());
+        assert!(
+            c.get(
+                &CacheKey::new(&Name::parse("a.example").unwrap(), 1, "vpn"),
+                now
+            )
+            .is_none()
+        );
         c.flush_scope("lan");
         assert_eq!(c.len(), 0);
     }

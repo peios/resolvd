@@ -1,0 +1,10 @@
+[package]
+name        = "dev.peios.resolv-debuginfo"
+description = "Debugging symbols for the Peios name-resolution client"
+
+[dependencies]
+"dev.peios.resolv" = "= {{version}}-7"
+
+[files]
+"@source:LICENSE"                = "usr/share/licenses/dev.peios.resolv-debuginfo/LICENSE"
+":debug/resolv/usr/lib/debug/**" = "usr/lib/debug"

@@ -44,14 +44,26 @@ impl Upstream {
 
     /// Open a socket and send. A failure here is reported as `Failed`
     /// synchronously — a route to nowhere is known at `connect`.
-    pub fn send(&mut self, tx: Txid, server: IpAddr, tcp: bool, payload: Vec<u8>) -> Result<(), io::Error> {
+    pub fn send(
+        &mut self,
+        tx: Txid,
+        server: IpAddr,
+        tcp: bool,
+        payload: Vec<u8>,
+    ) -> Result<(), io::Error> {
         let addr = SocketAddr::new(server, DNS_PORT);
         if tcp {
             let stream = connect_nonblocking(addr)?;
             let mut frame = Vec::with_capacity(2 + payload.len());
             frame.extend_from_slice(&(payload.len() as u16).to_be_bytes());
             frame.extend_from_slice(&payload);
-            self.tcp.insert(tx, Tcp { stream, state: TcpState::Connecting });
+            self.tcp.insert(
+                tx,
+                Tcp {
+                    stream,
+                    state: TcpState::Connecting,
+                },
+            );
             if let Some(t) = self.tcp.get_mut(&tx) {
                 t.state = TcpState::Sending { frame, sent: 0 };
             }
@@ -76,7 +88,11 @@ impl Upstream {
 
     /// Descriptors to poll, with the events each wants.
     pub fn fds(&self) -> Vec<(Txid, RawFd, i16)> {
-        let mut out: Vec<(Txid, RawFd, i16)> = self.udp.iter().map(|(tx, s)| (*tx, s.as_raw_fd(), libc::POLLIN)).collect();
+        let mut out: Vec<(Txid, RawFd, i16)> = self
+            .udp
+            .iter()
+            .map(|(tx, s)| (*tx, s.as_raw_fd(), libc::POLLIN))
+            .collect();
         for (tx, t) in &self.tcp {
             let events = match t.state {
                 TcpState::Connecting | TcpState::Sending { .. } => libc::POLLOUT,
@@ -108,7 +124,9 @@ impl Upstream {
             };
         }
         let t = self.tcp.get_mut(&tx)?;
-        if revents & (libc::POLLERR | libc::POLLHUP) != 0 && !matches!(t.state, TcpState::Receiving { .. }) {
+        if revents & (libc::POLLERR | libc::POLLHUP) != 0
+            && !matches!(t.state, TcpState::Receiving { .. })
+        {
             self.tcp.remove(&tx);
             return Some(Event::Failed);
         }
@@ -116,17 +134,19 @@ impl Upstream {
             TcpState::Connecting => None,
             TcpState::Sending { frame, sent } => {
                 // The first POLLOUT is connect completing; SO_ERROR says how.
-                if *sent == 0 {
-                    if let Ok(Some(_)) | Err(_) = t.stream.take_error() {
-                        self.tcp.remove(&tx);
-                        return Some(Event::Failed);
-                    }
+                if *sent == 0
+                    && let Ok(Some(_)) | Err(_) = t.stream.take_error()
+                {
+                    self.tcp.remove(&tx);
+                    return Some(Event::Failed);
                 }
                 match t.stream.write(&frame[*sent..]) {
                     Ok(n) => {
                         *sent += n;
                         if *sent == frame.len() {
-                            t.state = TcpState::Receiving { buf: Vec::with_capacity(512) };
+                            t.state = TcpState::Receiving {
+                                buf: Vec::with_capacity(512),
+                            };
                         }
                         None
                     }
@@ -176,7 +196,13 @@ fn connect_nonblocking(addr: SocketAddr) -> io::Result<TcpStream> {
         SocketAddr::V6(_) => libc::AF_INET6,
     };
     // SAFETY: plain socket creation; the descriptor is owned immediately.
-    let fd = unsafe { libc::socket(family, libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC, 0) };
+    let fd = unsafe {
+        libc::socket(
+            family,
+            libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+            0,
+        )
+    };
     if fd < 0 {
         return Err(io::Error::last_os_error());
     }
@@ -187,22 +213,32 @@ fn connect_nonblocking(addr: SocketAddr) -> io::Result<TcpStream> {
             let sa = libc::sockaddr_in {
                 sin_family: libc::AF_INET as libc::sa_family_t,
                 sin_port: a.port().to_be(),
-                sin_addr: libc::in_addr { s_addr: u32::from_ne_bytes(a.ip().octets()) },
+                sin_addr: libc::in_addr {
+                    s_addr: u32::from_ne_bytes(a.ip().octets()),
+                },
                 sin_zero: [0; 8],
             };
             let boxed = Box::new(sa);
-            (Box::leak(boxed) as *const libc::sockaddr_in as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t)
+            (
+                Box::leak(boxed) as *const libc::sockaddr_in as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t,
+            )
         }
         SocketAddr::V6(a) => {
             let sa = libc::sockaddr_in6 {
                 sin6_family: libc::AF_INET6 as libc::sa_family_t,
                 sin6_port: a.port().to_be(),
                 sin6_flowinfo: 0,
-                sin6_addr: libc::in6_addr { s6_addr: a.ip().octets() },
+                sin6_addr: libc::in6_addr {
+                    s6_addr: a.ip().octets(),
+                },
                 sin6_scope_id: a.scope_id(),
             };
             let boxed = Box::new(sa);
-            (Box::leak(boxed) as *const libc::sockaddr_in6 as *const libc::sockaddr, std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t)
+            (
+                Box::leak(boxed) as *const libc::sockaddr_in6 as *const libc::sockaddr,
+                std::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t,
+            )
         }
     };
     // SAFETY: `ptr` points at a live, correctly sized sockaddr for the call.

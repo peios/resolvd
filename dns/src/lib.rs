@@ -143,7 +143,10 @@ impl Name {
             return false;
         }
         let skip = self.labels.len() - suffix.labels.len();
-        self.labels[skip..].iter().zip(&suffix.labels).all(|(a, b)| a.eq_ignore_ascii_case(b))
+        self.labels[skip..]
+            .iter()
+            .zip(&suffix.labels)
+            .all(|(a, b)| a.eq_ignore_ascii_case(b))
     }
 
     /// `self` with `suffix` appended: `host` + `example.com` → `host.example.com`.
@@ -155,7 +158,9 @@ impl Name {
 
     /// The name with every label lowercased — a cache key.
     pub fn to_lowercase(&self) -> Name {
-        Name { labels: self.labels.iter().map(|l| l.to_ascii_lowercase()).collect() }
+        Name {
+            labels: self.labels.iter().map(|l| l.to_ascii_lowercase()).collect(),
+        }
     }
 
     /// The reverse-mapping name for an address: `4.3.2.1.in-addr.arpa`.
@@ -213,7 +218,13 @@ impl Name {
                 .iter()
                 .map(|l| {
                     l.iter()
-                        .map(|&b| if b.is_ascii_alphabetic() && bits() { b ^ 0x20 } else { b })
+                        .map(|&b| {
+                            if b.is_ascii_alphabetic() && bits() {
+                                b ^ 0x20
+                            } else {
+                                b
+                            }
+                        })
                         .collect()
                 })
                 .collect(),
@@ -280,7 +291,11 @@ impl Name {
 impl PartialEq for Name {
     fn eq(&self, other: &Name) -> bool {
         self.labels.len() == other.labels.len()
-            && self.labels.iter().zip(&other.labels).all(|(a, b)| a.eq_ignore_ascii_case(b))
+            && self
+                .labels
+                .iter()
+                .zip(&other.labels)
+                .all(|(a, b)| a.eq_ignore_ascii_case(b))
     }
 }
 
@@ -461,7 +476,11 @@ pub struct Question {
 
 impl Question {
     pub fn new(name: Name, rtype: u16) -> Question {
-        Question { name, rtype, class: class::IN }
+        Question {
+            name,
+            rtype,
+            class: class::IN,
+        }
     }
 }
 
@@ -479,9 +498,25 @@ pub enum RData {
     Cname(Name),
     Ptr(Name),
     Ns(Name),
-    Soa { mname: Name, rname: Name, serial: u32, refresh: u32, retry: u32, expire: u32, minimum: u32 },
-    Mx { preference: u16, exchange: Name },
-    Srv { priority: u16, weight: u16, port: u16, target: Name },
+    Soa {
+        mname: Name,
+        rname: Name,
+        serial: u32,
+        refresh: u32,
+        retry: u32,
+        expire: u32,
+        minimum: u32,
+    },
+    Mx {
+        preference: u16,
+        exchange: Name,
+    },
+    Srv {
+        priority: u16,
+        weight: u16,
+        port: u16,
+        target: Name,
+    },
     Txt(Vec<Vec<u8>>),
     /// An EDNS pseudo-record: the class and TTL fields carry its meaning, and
     /// the data is options we neither send nor read.
@@ -513,7 +548,13 @@ impl Record {
             RData::Opt(_) => rtype::OPT,
             RData::Unknown(_) => 0,
         };
-        Record { name, rtype, class: class::IN, ttl, rdata }
+        Record {
+            name,
+            rtype,
+            class: class::IN,
+            ttl,
+            rdata,
+        }
     }
 
     /// The EDNS OPT pseudo-record advertising `udp_size`.
@@ -533,11 +574,27 @@ impl Record {
             RData::A(a) => a.to_string(),
             RData::Aaaa(a) => a.to_string(),
             RData::Cname(n) | RData::Ptr(n) | RData::Ns(n) => n.to_string(),
-            RData::Soa { mname, rname, serial, refresh, retry, expire, minimum } => {
+            RData::Soa {
+                mname,
+                rname,
+                serial,
+                refresh,
+                retry,
+                expire,
+                minimum,
+            } => {
                 format!("{mname} {rname} {serial} {refresh} {retry} {expire} {minimum}")
             }
-            RData::Mx { preference, exchange } => format!("{preference} {exchange}"),
-            RData::Srv { priority, weight, port, target } => format!("{priority} {weight} {port} {target}"),
+            RData::Mx {
+                preference,
+                exchange,
+            } => format!("{preference} {exchange}"),
+            RData::Srv {
+                priority,
+                weight,
+                port,
+                target,
+            } => format!("{priority} {weight} {port} {target}"),
             RData::Txt(strings) => strings
                 .iter()
                 .map(|s| format!("\"{}\"", String::from_utf8_lossy(s).replace('"', "\\\"")))
@@ -575,18 +632,34 @@ fn write_rdata(out: &mut Vec<u8>, rdata: &RData) {
         RData::A(a) => out.extend_from_slice(&a.octets()),
         RData::Aaaa(a) => out.extend_from_slice(&a.octets()),
         RData::Cname(n) | RData::Ptr(n) | RData::Ns(n) => n.write(out),
-        RData::Soa { mname, rname, serial, refresh, retry, expire, minimum } => {
+        RData::Soa {
+            mname,
+            rname,
+            serial,
+            refresh,
+            retry,
+            expire,
+            minimum,
+        } => {
             mname.write(out);
             rname.write(out);
             for v in [serial, refresh, retry, expire, minimum] {
                 out.extend_from_slice(&v.to_be_bytes());
             }
         }
-        RData::Mx { preference, exchange } => {
+        RData::Mx {
+            preference,
+            exchange,
+        } => {
             out.extend_from_slice(&preference.to_be_bytes());
             exchange.write(out);
         }
-        RData::Srv { priority, weight, port, target } => {
+        RData::Srv {
+            priority,
+            weight,
+            port,
+            target,
+        } => {
             out.extend_from_slice(&priority.to_be_bytes());
             out.extend_from_slice(&weight.to_be_bytes());
             out.extend_from_slice(&port.to_be_bytes());
@@ -673,7 +746,10 @@ fn read_rdata(msg: &[u8], rtype: u16, start: usize, len: usize) -> Result<RData,
             if next != end {
                 return Err(Error::BadRData);
             }
-            RData::Mx { preference: u16_at(start)?, exchange }
+            RData::Mx {
+                preference: u16_at(start)?,
+                exchange,
+            }
         }
         rtype::SRV => {
             if len < 7 {
@@ -683,7 +759,12 @@ fn read_rdata(msg: &[u8], rtype: u16, start: usize, len: usize) -> Result<RData,
             if next != end {
                 return Err(Error::BadRData);
             }
-            RData::Srv { priority: u16_at(start)?, weight: u16_at(start + 2)?, port: u16_at(start + 4)?, target }
+            RData::Srv {
+                priority: u16_at(start)?,
+                weight: u16_at(start + 2)?,
+                port: u16_at(start + 4)?,
+                target,
+            }
         }
         rtype::TXT => {
             let mut strings = Vec::new();
@@ -717,7 +798,11 @@ impl Message {
     /// [`EDNS_UDP_SIZE`].
     pub fn query(id: u16, question: Question) -> Message {
         Message {
-            header: Header { id, recursion_desired: true, ..Default::default() },
+            header: Header {
+                id,
+                recursion_desired: true,
+                ..Default::default()
+            },
             questions: vec![question],
             additional: vec![Record::opt(EDNS_UDP_SIZE, false)],
             ..Default::default()
@@ -747,12 +832,17 @@ impl Message {
 
     /// The peer's advertised UDP payload size, or the classic 512.
     pub fn udp_size(&self) -> u16 {
-        self.opt().map(|o| o.class.max(CLASSIC_UDP_SIZE)).unwrap_or(CLASSIC_UDP_SIZE)
+        self.opt()
+            .map(|o| o.class.max(CLASSIC_UDP_SIZE))
+            .unwrap_or(CLASSIC_UDP_SIZE)
     }
 
     /// The full response code, with the EDNS extended bits.
     pub fn rcode(&self) -> u16 {
-        let ext = self.opt().map(|o| ((o.ttl >> 24) & 0xFF) as u16).unwrap_or(0);
+        let ext = self
+            .opt()
+            .map(|o| ((o.ttl >> 24) & 0xFF) as u16)
+            .unwrap_or(0);
         (ext << 4) | u16::from(self.header.rcode)
     }
 
@@ -760,7 +850,12 @@ impl Message {
         let mut out = Vec::with_capacity(512);
         out.extend_from_slice(&self.header.id.to_be_bytes());
         out.extend_from_slice(&self.header.flags().to_be_bytes());
-        for n in [self.questions.len(), self.answers.len(), self.authority.len(), self.additional.len()] {
+        for n in [
+            self.questions.len(),
+            self.answers.len(),
+            self.authority.len(),
+            self.additional.len(),
+        ] {
             if n > u16::MAX as usize {
                 return Err(Error::TooLarge);
             }
@@ -771,7 +866,12 @@ impl Message {
             out.extend_from_slice(&q.rtype.to_be_bytes());
             out.extend_from_slice(&q.class.to_be_bytes());
         }
-        for r in self.answers.iter().chain(&self.authority).chain(&self.additional) {
+        for r in self
+            .answers
+            .iter()
+            .chain(&self.authority)
+            .chain(&self.additional)
+        {
             r.write(&mut out);
         }
         if out.len() > MAX_MESSAGE_SIZE {
@@ -788,7 +888,10 @@ impl Message {
             return Ok(full);
         }
         let mut truncated = Message {
-            header: Header { truncated: true, ..self.header },
+            header: Header {
+                truncated: true,
+                ..self.header
+            },
             questions: self.questions.clone(),
             ..Default::default()
         };
@@ -828,14 +931,26 @@ impl Message {
                 let len = u16::from_be_bytes([b[8], b[9]]) as usize;
                 let start = next + 10;
                 let rdata = read_rdata(msg, rtype, start, len)?;
-                section.push(Record { name, rtype, class, ttl, rdata });
+                section.push(Record {
+                    name,
+                    rtype,
+                    class,
+                    ttl,
+                    rdata,
+                });
                 p = start + len;
             }
         }
         // Trailing bytes are tolerated: some middleboxes pad, and RFC 1035
         // does not forbid it. Being strict would refuse real answers.
         let [answers, authority, additional] = sections;
-        Ok(Message { header, questions, answers, authority, additional })
+        Ok(Message {
+            header,
+            questions,
+            answers,
+            authority,
+            additional,
+        })
     }
 
     /// The single question, when there is exactly one.
@@ -865,7 +980,10 @@ mod tests {
         assert!(Name::parse(&"a".repeat(64)).is_err());
         assert!(n("host.example.com").ends_with(&n("EXAMPLE.com")));
         assert!(!n("example.com").ends_with(&n("host.example.com")));
-        assert_eq!(n("host").join(&n("example.com")).unwrap(), n("host.example.com"));
+        assert_eq!(
+            n("host").join(&n("example.com")).unwrap(),
+            n("host.example.com")
+        );
         let mut h1 = std::collections::hash_map::DefaultHasher::new();
         let mut h2 = std::collections::hash_map::DefaultHasher::new();
         use std::hash::{Hash, Hasher};
@@ -878,7 +996,10 @@ mod tests {
     fn reverse_names_round_trip() {
         let v4 = Name::reverse_v4(Ipv4Addr::new(10, 0, 2, 15));
         assert_eq!(v4.to_string(), "15.2.0.10.in-addr.arpa");
-        assert_eq!(v4.reverse_address(), Some(Ipv4Addr::new(10, 0, 2, 15).into()));
+        assert_eq!(
+            v4.reverse_address(),
+            Some(Ipv4Addr::new(10, 0, 2, 15).into())
+        );
         let a6: Ipv6Addr = "2001:db8::1".parse().unwrap();
         let v6 = Name::reverse_v6(a6);
         assert!(v6.to_string().starts_with("1.0.0.0.0.0.0.0."));
@@ -900,12 +1021,27 @@ mod tests {
 
     #[test]
     fn a_response_with_every_typed_record_round_trips() {
-        let mut m = Message::reply_to(&Message::query(7, Question::new(n("example.com"), rtype::ANY)));
+        let mut m = Message::reply_to(&Message::query(
+            7,
+            Question::new(n("example.com"), rtype::ANY),
+        ));
         let recs = vec![
-            Record::new(n("example.com"), 300, RData::A(Ipv4Addr::new(93, 184, 216, 34))),
-            Record::new(n("example.com"), 300, RData::Aaaa("2606:2800::1".parse().unwrap())),
+            Record::new(
+                n("example.com"),
+                300,
+                RData::A(Ipv4Addr::new(93, 184, 216, 34)),
+            ),
+            Record::new(
+                n("example.com"),
+                300,
+                RData::Aaaa("2606:2800::1".parse().unwrap()),
+            ),
             Record::new(n("www.example.com"), 60, RData::Cname(n("example.com"))),
-            Record::new(n("34.216.184.93.in-addr.arpa"), 60, RData::Ptr(n("example.com"))),
+            Record::new(
+                n("34.216.184.93.in-addr.arpa"),
+                60,
+                RData::Ptr(n("example.com")),
+            ),
             Record::new(n("example.com"), 60, RData::Ns(n("a.iana-servers.net"))),
             Record::new(
                 n("example.com"),
@@ -920,14 +1056,36 @@ mod tests {
                     minimum: 3600,
                 },
             ),
-            Record::new(n("example.com"), 60, RData::Mx { preference: 10, exchange: n("mail.example.com") }),
+            Record::new(
+                n("example.com"),
+                60,
+                RData::Mx {
+                    preference: 10,
+                    exchange: n("mail.example.com"),
+                },
+            ),
             Record::new(
                 n("_sip._tcp.example.com"),
                 60,
-                RData::Srv { priority: 1, weight: 2, port: 5060, target: n("sip.example.com") },
+                RData::Srv {
+                    priority: 1,
+                    weight: 2,
+                    port: 5060,
+                    target: n("sip.example.com"),
+                },
             ),
-            Record::new(n("example.com"), 60, RData::Txt(vec![b"v=spf1 -all".to_vec(), b"x".to_vec()])),
-            Record { name: n("example.com"), rtype: 99, class: 1, ttl: 1, rdata: RData::Unknown(vec![1, 2, 3]) },
+            Record::new(
+                n("example.com"),
+                60,
+                RData::Txt(vec![b"v=spf1 -all".to_vec(), b"x".to_vec()]),
+            ),
+            Record {
+                name: n("example.com"),
+                rtype: 99,
+                class: 1,
+                ttl: 1,
+                rdata: RData::Unknown(vec![1, 2, 3]),
+            },
         ];
         m.answers = recs.clone();
         m.additional.push(Record::opt(4096, true));
@@ -938,7 +1096,10 @@ mod tests {
         assert_eq!(back.udp_size(), 4096);
         assert_eq!(back.rcode(), 0);
         assert_eq!(back.answers[8].rdata_text(), "\"v=spf1 -all\" \"x\"");
-        assert_eq!(back.answers[5].rdata_text(), "ns.icann.org noc.dns.icann.org 2024 7200 3600 1209600 3600");
+        assert_eq!(
+            back.answers[5].rdata_text(),
+            "ns.icann.org noc.dns.icann.org 2024 7200 3600 1209600 3600"
+        );
     }
 
     #[test]
@@ -988,9 +1149,16 @@ mod tests {
 
     #[test]
     fn udp_encoding_truncates_over_the_limit() {
-        let mut m = Message::reply_to(&Message::query(1, Question::new(n("big.example"), rtype::A)));
+        let mut m = Message::reply_to(&Message::query(
+            1,
+            Question::new(n("big.example"), rtype::A),
+        ));
         for i in 0..100u8 {
-            m.answers.push(Record::new(n("big.example"), 1, RData::A(Ipv4Addr::new(10, 0, 0, i))));
+            m.answers.push(Record::new(
+                n("big.example"),
+                1,
+                RData::A(Ipv4Addr::new(10, 0, 0, i)),
+            ));
         }
         let bytes = m.encode_udp(512).unwrap();
         assert!(bytes.len() <= 512);

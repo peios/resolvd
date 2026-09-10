@@ -87,7 +87,11 @@ impl Family {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Request {
     /// One question: records of `rtype` at `name`.
-    Resolve { name: String, rtype: u16, no_cache: bool },
+    Resolve {
+        name: String,
+        rtype: u16,
+        no_cache: bool,
+    },
     /// The addresses of a name — A and/or AAAA, search expansion applied,
     /// canonical name chased. What `getaddrinfo` asks.
     Lookup { name: String, family: Family },
@@ -103,7 +107,11 @@ impl Request {
     pub fn encode(&self) -> Vec<u8> {
         let mut w = Writer::new();
         match self {
-            Request::Resolve { name, rtype, no_cache } => {
+            Request::Resolve {
+                name,
+                rtype,
+                no_cache,
+            } => {
                 w.write_map(4)
                     .write_str("query")
                     .write_str("resolve")
@@ -124,7 +132,11 @@ impl Request {
                     .write_str(family.as_str());
             }
             Request::Reverse { address } => {
-                w.write_map(2).write_str("query").write_str("reverse").write_str("address").write_str(&address.to_string());
+                w.write_map(2)
+                    .write_str("query")
+                    .write_str("reverse")
+                    .write_str("address")
+                    .write_str(&address.to_string());
             }
             Request::Status => {
                 w.write_map(1).write_str("query").write_str("status");
@@ -149,7 +161,11 @@ impl Request {
             match key {
                 "query" => query = Some(r.read_str()?.to_owned()),
                 "name" => name = Some(r.read_str()?.to_owned()),
-                "type" => rtype = Some(u16::try_from(r.read_uint()?).map_err(|_| WireError::Missing("type"))?),
+                "type" => {
+                    rtype = Some(
+                        u16::try_from(r.read_uint()?).map_err(|_| WireError::Missing("type"))?,
+                    )
+                }
                 "no_cache" => no_cache = r.read_bool()?,
                 "family" => family = Family::parse(r.read_str()?),
                 "address" => address = Some(r.read_str()?.to_owned()),
@@ -169,7 +185,9 @@ impl Request {
             }),
             Some("reverse") => {
                 let a = address.ok_or(WireError::Missing("address"))?;
-                Ok(Request::Reverse { address: a.parse().map_err(|_| WireError::Missing("address"))? })
+                Ok(Request::Reverse {
+                    address: a.parse().map_err(|_| WireError::Missing("address"))?,
+                })
             }
             Some("status") => Ok(Request::Status),
             Some("flush") => Ok(Request::Flush),
@@ -366,7 +384,11 @@ impl Reply {
                 w.write_map(1).write_str("ok").write_bool(true);
             }
             Reply::Error(message) => {
-                w.write_map(2).write_str("ok").write_bool(false).write_str("error").write_str(message);
+                w.write_map(2)
+                    .write_str("ok")
+                    .write_bool(false)
+                    .write_str("error")
+                    .write_str(message);
             }
             Reply::Answer(a) => {
                 w.write_map(9).write_str("ok").write_bool(true);
@@ -392,7 +414,8 @@ impl Reply {
                 w.write_str("kind").write_str("addresses");
                 w.write_str("outcome").write_str(a.outcome.as_str());
                 w.write_str("canonical").write_str(&a.canonical);
-                w.write_str("addresses").write_array(a.addresses.len() as u32);
+                w.write_str("addresses")
+                    .write_array(a.addresses.len() as u32);
                 for x in &a.addresses {
                     w.write_map(2);
                     w.write_str("address").write_str(&x.address.to_string());
@@ -558,7 +581,9 @@ impl Reply {
             Ok(())
         })?;
         match (ok, kind.as_deref()) {
-            (Some(false), _) => Ok(Reply::Error(error.unwrap_or_else(|| "unspecified error".to_owned()))),
+            (Some(false), _) => Ok(Reply::Error(
+                error.unwrap_or_else(|| "unspecified error".to_owned()),
+            )),
             (Some(true), Some("answer")) => Ok(Reply::Answer(answer)),
             (Some(true), Some("addresses")) => Ok(Reply::Addresses(addresses)),
             (Some(true), Some("status")) => Ok(Reply::Status(status)),
@@ -683,9 +708,18 @@ mod tests {
     #[test]
     fn requests_round_trip() {
         for req in [
-            Request::Resolve { name: "example.com".into(), rtype: 1, no_cache: true },
-            Request::Lookup { name: "host".into(), family: Family::V6 },
-            Request::Reverse { address: "10.0.2.15".parse().unwrap() },
+            Request::Resolve {
+                name: "example.com".into(),
+                rtype: 1,
+                no_cache: true,
+            },
+            Request::Lookup {
+                name: "host".into(),
+                family: Family::V6,
+            },
+            Request::Reverse {
+                address: "10.0.2.15".parse().unwrap(),
+            },
             Request::Status,
             Request::Flush,
         ] {
@@ -699,7 +733,13 @@ mod tests {
     fn replies_round_trip() {
         let answer = Reply::Answer(Answer {
             outcome: Outcome::Found,
-            records: vec![RecordOut { name: "example.com".into(), rtype: 1, ttl: 30, data: vec![1, 2, 3, 4], text: "1.2.3.4".into() }],
+            records: vec![RecordOut {
+                name: "example.com".into(),
+                rtype: 1,
+                ttl: 30,
+                data: vec![1, 2, 3, 4],
+                text: "1.2.3.4".into(),
+            }],
             source: "dns".into(),
             server: Some("10.0.2.3".into()),
             interface: Some("eth0".into()),
@@ -710,7 +750,10 @@ mod tests {
         let addresses = Reply::Addresses(Addresses {
             outcome: Outcome::Found,
             canonical: "example.com".into(),
-            addresses: vec![AddressOut { address: "1.2.3.4".parse().unwrap(), ttl: 30 }],
+            addresses: vec![AddressOut {
+                address: "1.2.3.4".parse().unwrap(),
+                ttl: 30,
+            }],
             source: "cache".into(),
             validation: Validation::Unvalidated,
         });
@@ -730,7 +773,11 @@ mod tests {
             }],
             fallback_servers: vec![],
             cache_entries: 3,
-            counters: Counters { queries: 9, cache_hits: 2, ..Default::default() },
+            counters: Counters {
+                queries: 9,
+                cache_hits: 2,
+                ..Default::default()
+            },
         });
         assert_eq!(Reply::decode(&status.encode()).unwrap(), status);
         assert_eq!(Reply::decode(&Reply::Ok.encode()).unwrap(), Reply::Ok);
@@ -773,15 +820,51 @@ mod fuzz_tests {
 
     #[test]
     fn fuzz_decoders_never_panic() {
-        let iters: usize = std::env::var("RESOLV_FUZZ_ITERS").ok().and_then(|s| s.parse().ok()).unwrap_or(20_000);
+        let iters: usize = std::env::var("RESOLV_FUZZ_ITERS")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20_000);
         let mut rng = Rng(0xc0de);
         let seeds: Vec<Vec<u8>> = vec![
-            Request::Resolve { name: "a.example".into(), rtype: 1, no_cache: true }.encode(),
-            Request::Lookup { name: "x".into(), family: Family::V6 }.encode(),
-            Request::Reverse { address: "10.0.0.1".parse().unwrap() }.encode(),
-            Reply::Answer(Answer { records: vec![RecordOut { name: "a".into(), rtype: 1, ttl: 1, data: vec![1], text: "t".into() }], ..Default::default() }).encode(),
-            Reply::Status(StatusReport { scopes: vec![ScopeStatus::default()], ..Default::default() }).encode(),
-            Reply::Addresses(Addresses { addresses: vec![AddressOut { address: "::1".parse().unwrap(), ttl: 2 }], ..Default::default() }).encode(),
+            Request::Resolve {
+                name: "a.example".into(),
+                rtype: 1,
+                no_cache: true,
+            }
+            .encode(),
+            Request::Lookup {
+                name: "x".into(),
+                family: Family::V6,
+            }
+            .encode(),
+            Request::Reverse {
+                address: "10.0.0.1".parse().unwrap(),
+            }
+            .encode(),
+            Reply::Answer(Answer {
+                records: vec![RecordOut {
+                    name: "a".into(),
+                    rtype: 1,
+                    ttl: 1,
+                    data: vec![1],
+                    text: "t".into(),
+                }],
+                ..Default::default()
+            })
+            .encode(),
+            Reply::Status(StatusReport {
+                scopes: vec![ScopeStatus::default()],
+                ..Default::default()
+            })
+            .encode(),
+            Reply::Addresses(Addresses {
+                addresses: vec![AddressOut {
+                    address: "::1".parse().unwrap(),
+                    ttl: 2,
+                }],
+                ..Default::default()
+            })
+            .encode(),
         ];
         for _ in 0..iters {
             let mut bytes = if rng.below(4) == 0 {

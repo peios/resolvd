@@ -1,7 +1,0 @@
-# resolv — the resolvd operator command: status, query, lookup, reverse, flush.
-
-[package]
-description = "Operator command for the Peios stub resolver"
-
-[files]
-":usr/bin/resolv" = "usr/bin/resolv"

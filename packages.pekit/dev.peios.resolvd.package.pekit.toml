@@ -1,0 +1,21 @@
+# The daemon, its constant resolver pointer, and its inert service and port
+# policy seeds. It deliberately has no hard dependency on netd: localhost and
+# static registry names remain useful while the network manager is absent, and
+# the subscription reconnects when netd appears.
+[package]
+name        = "dev.peios.resolvd"
+description = "Peios machine-wide name-resolution service"
+
+[provides]
+resolvd = "{{version}}-7"
+
+[replaces]
+resolvd = "<= 0.1.0-6"
+
+[files]
+"@source:LICENSE"                         = "usr/share/licenses/dev.peios.resolvd/LICENSE"
+":usr/sbin/resolvd"                       = "usr/sbin/resolvd"
+":usr/etc/resolv.conf"                    = "usr/etc/resolv.conf"
+":usr/share/regim/resolvd-service.reg"    = "usr/share/regim/resolvd-service.reg"
+":usr/share/regim/resolvd-port.reg"       = "usr/share/regim/resolvd-port.reg"
+":usr/share/regman/resolvd.regman"        = "usr/share/regman/resolvd.regman"

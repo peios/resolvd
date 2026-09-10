@@ -87,8 +87,16 @@ fn connect() -> Option<UnixStream> {
 }
 
 fn lookup(name: &str, family: Family) -> Got<Addresses> {
-    let Some(mut stream) = connect() else { return Got::Unavailable };
-    match libresolv::call(&mut stream, &Request::Lookup { name: name.to_owned(), family }) {
+    let Some(mut stream) = connect() else {
+        return Got::Unavailable;
+    };
+    match libresolv::call(
+        &mut stream,
+        &Request::Lookup {
+            name: name.to_owned(),
+            family,
+        },
+    ) {
         Ok(Reply::Addresses(a)) => match a.outcome {
             Outcome::Found => Got::Value(a),
             Outcome::NotFound => Got::NotFound,
@@ -96,13 +104,20 @@ fn lookup(name: &str, family: Family) -> Got<Addresses> {
         },
         Ok(_) => Got::Unavailable,
         // A timeout lands here: resolvd exists and did not answer in time.
-        Err(libresolv::WireError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => Got::TryAgain,
+        Err(libresolv::WireError::Io(e))
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
+            Got::TryAgain
+        }
         Err(_) => Got::Unavailable,
     }
 }
 
 fn reverse(address: IpAddr) -> Got<Answer> {
-    let Some(mut stream) = connect() else { return Got::Unavailable };
+    let Some(mut stream) = connect() else {
+        return Got::Unavailable;
+    };
     match libresolv::call(&mut stream, &Request::Reverse { address }) {
         Ok(Reply::Answer(a)) => match a.outcome {
             Outcome::Found if a.records.is_empty() => Got::NotFound,
@@ -111,7 +126,12 @@ fn reverse(address: IpAddr) -> Got<Answer> {
             Outcome::Unavailable => Got::TryAgain,
         },
         Ok(_) => Got::Unavailable,
-        Err(libresolv::WireError::Io(e)) if e.kind() == std::io::ErrorKind::WouldBlock || e.kind() == std::io::ErrorKind::TimedOut => Got::TryAgain,
+        Err(libresolv::WireError::Io(e))
+            if e.kind() == std::io::ErrorKind::WouldBlock
+                || e.kind() == std::io::ErrorKind::TimedOut =>
+        {
+            Got::TryAgain
+        }
         Err(_) => Got::Unavailable,
     }
 }
@@ -125,12 +145,24 @@ fn is_localhost(name: &str) -> bool {
 fn local_addresses(family: Family) -> Addresses {
     let mut addresses = Vec::new();
     if family != Family::V6 {
-        addresses.push(libresolv::AddressOut { address: Ipv4Addr::LOCALHOST.into(), ttl: 0 });
+        addresses.push(libresolv::AddressOut {
+            address: Ipv4Addr::LOCALHOST.into(),
+            ttl: 0,
+        });
     }
     if family != Family::V4 {
-        addresses.push(libresolv::AddressOut { address: Ipv6Addr::LOCALHOST.into(), ttl: 0 });
+        addresses.push(libresolv::AddressOut {
+            address: Ipv6Addr::LOCALHOST.into(),
+            ttl: 0,
+        });
     }
-    Addresses { outcome: Outcome::Found, canonical: "localhost".into(), addresses, source: "local".into(), validation: Default::default() }
+    Addresses {
+        outcome: Outcome::Found,
+        canonical: "localhost".into(),
+        addresses,
+        source: "local".into(),
+        validation: Default::default(),
+    }
 }
 
 unsafe fn borrow<'a>(pointer: *const c_char) -> Option<&'a str> {
@@ -140,7 +172,13 @@ unsafe fn borrow<'a>(pointer: *const c_char) -> Option<&'a str> {
     unsafe { core::ffi::CStr::from_ptr(pointer) }.to_str().ok()
 }
 
-unsafe fn fail(status: NssStatus, errnop: *mut c_int, h_errnop: *mut c_int, errno: c_int, h_errno: c_int) -> NssStatus {
+unsafe fn fail(
+    status: NssStatus,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+    errno: c_int,
+    h_errno: c_int,
+) -> NssStatus {
     unsafe {
         if !errnop.is_null() {
             errnop.write(errno);
@@ -152,12 +190,40 @@ unsafe fn fail(status: NssStatus, errnop: *mut c_int, h_errnop: *mut c_int, errn
     status
 }
 
-unsafe fn status_of<T>(got: &Got<T>, errnop: *mut c_int, h_errnop: *mut c_int) -> Option<NssStatus> {
+unsafe fn status_of<T>(
+    got: &Got<T>,
+    errnop: *mut c_int,
+    h_errnop: *mut c_int,
+) -> Option<NssStatus> {
     Some(match got {
         Got::Value(_) => return None,
-        Got::NotFound => unsafe { fail(NssStatus::NotFound, errnop, h_errnop, libc::ENOENT, HOST_NOT_FOUND) },
-        Got::TryAgain => unsafe { fail(NssStatus::TryAgain, errnop, h_errnop, libc::EAGAIN, TRY_AGAIN) },
-        Got::Unavailable => unsafe { fail(NssStatus::Unavail, errnop, h_errnop, libc::ENOENT, NO_RECOVERY) },
+        Got::NotFound => unsafe {
+            fail(
+                NssStatus::NotFound,
+                errnop,
+                h_errnop,
+                libc::ENOENT,
+                HOST_NOT_FOUND,
+            )
+        },
+        Got::TryAgain => unsafe {
+            fail(
+                NssStatus::TryAgain,
+                errnop,
+                h_errnop,
+                libc::EAGAIN,
+                TRY_AGAIN,
+            )
+        },
+        Got::Unavailable => unsafe {
+            fail(
+                NssStatus::Unavail,
+                errnop,
+                h_errnop,
+                libc::ENOENT,
+                NO_RECOVERY,
+            )
+        },
     })
 }
 
@@ -201,6 +267,7 @@ fn resolve_addresses(name: &str, family: Family) -> Got<Addresses> {
 /// # Safety
 ///
 /// `result` and the buffer must be valid as glibc guarantees for an NSS call.
+#[allow(clippy::too_many_arguments)]
 unsafe fn render_hostent(
     a: &Addresses,
     af: c_int,
@@ -213,16 +280,24 @@ unsafe fn render_hostent(
     canonp: *mut *mut c_char,
 ) -> NssStatus {
     let mut packer = unsafe { Packer::new(buffer, buflen) };
-    let Some(name) = packer.str(&a.canonical) else { return unsafe { out_of_room(errnop, h_errnop) } };
+    let Some(name) = packer.str(&a.canonical) else {
+        return unsafe { out_of_room(errnop, h_errnop) };
+    };
     let addr_len = if af == libc::AF_INET6 { 16 } else { 4 };
-    let Some(aliases) = packer.pointers(1) else { return unsafe { out_of_room(errnop, h_errnop) } };
-    let Some(addr_list) = packer.pointers(a.addresses.len() + 1) else { return unsafe { out_of_room(errnop, h_errnop) } };
+    let Some(aliases) = packer.pointers(1) else {
+        return unsafe { out_of_room(errnop, h_errnop) };
+    };
+    let Some(addr_list) = packer.pointers(a.addresses.len() + 1) else {
+        return unsafe { out_of_room(errnop, h_errnop) };
+    };
     for (i, x) in a.addresses.iter().enumerate() {
         let bytes: Vec<u8> = match x.address {
             IpAddr::V4(v) => v.octets().to_vec(),
             IpAddr::V6(v) => v.octets().to_vec(),
         };
-        let Some(slot) = packer.bytes(&bytes, 4) else { return unsafe { out_of_room(errnop, h_errnop) } };
+        let Some(slot) = packer.bytes(&bytes, 4) else {
+            return unsafe { out_of_room(errnop, h_errnop) };
+        };
         // SAFETY: `pointers` reserved `len + 1` slots.
         unsafe { addr_list.add(i).write(slot) };
     }
@@ -244,6 +319,12 @@ unsafe fn render_hostent(
     NssStatus::Success
 }
 
+/// Resolve a host name into glibc's address-tuple representation.
+///
+/// # Safety
+///
+/// Every pointer and buffer must satisfy glibc's NSS module ABI for this
+/// entrypoint and writable out-parameters must remain valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_peios_net_gethostbyname4_r(
     name: *const c_char,
@@ -255,7 +336,15 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyname4_r(
     ttlp: *mut i32,
 ) -> NssStatus {
     let Some(name) = (unsafe { borrow(name) }) else {
-        return unsafe { fail(NssStatus::NotFound, errnop, h_errnop, libc::ENOENT, HOST_NOT_FOUND) };
+        return unsafe {
+            fail(
+                NssStatus::NotFound,
+                errnop,
+                h_errnop,
+                libc::ENOENT,
+                HOST_NOT_FOUND,
+            )
+        };
     };
     let got = resolve_addresses(name, Family::Any);
     if let Some(status) = unsafe { status_of(&got, errnop, h_errnop) } {
@@ -263,11 +352,16 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyname4_r(
     }
     let Got::Value(a) = got else { unreachable!() };
     let mut packer = unsafe { Packer::new(buffer, buflen) };
-    let Some(canonical) = packer.str(&a.canonical) else { return unsafe { out_of_room(errnop, h_errnop) } };
+    let Some(canonical) = packer.str(&a.canonical) else {
+        return unsafe { out_of_room(errnop, h_errnop) };
+    };
     let mut previous: *mut GaihAddrtuple = core::ptr::null_mut();
     let mut first: *mut GaihAddrtuple = core::ptr::null_mut();
     for x in &a.addresses {
-        let Some(slot) = packer.reserve(core::mem::size_of::<GaihAddrtuple>(), core::mem::align_of::<GaihAddrtuple>()) else {
+        let Some(slot) = packer.reserve(
+            core::mem::size_of::<GaihAddrtuple>(),
+            core::mem::align_of::<GaihAddrtuple>(),
+        ) else {
             return unsafe { out_of_room(errnop, h_errnop) };
         };
         let tuple = slot as *mut GaihAddrtuple;
@@ -281,7 +375,13 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyname4_r(
         };
         // SAFETY: `slot` is aligned, sized and owned by the caller's buffer.
         unsafe {
-            tuple.write(GaihAddrtuple { next: core::ptr::null_mut(), name: canonical, family, addr, scopeid: 0 });
+            tuple.write(GaihAddrtuple {
+                next: core::ptr::null_mut(),
+                name: canonical,
+                family,
+                addr,
+                scopeid: 0,
+            });
             if previous.is_null() {
                 first = tuple;
             } else {
@@ -304,6 +404,12 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyname4_r(
     NssStatus::Success
 }
 
+/// Resolve a host name into a caller-owned `hostent` for one address family.
+///
+/// # Safety
+///
+/// Every pointer and buffer must satisfy glibc's NSS module ABI for this
+/// entrypoint and writable out-parameters must remain valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_peios_net_gethostbyname3_r(
     name: *const c_char,
@@ -317,19 +423,45 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyname3_r(
     canonp: *mut *mut c_char,
 ) -> NssStatus {
     let Some(name) = (unsafe { borrow(name) }) else {
-        return unsafe { fail(NssStatus::NotFound, errnop, h_errnop, libc::ENOENT, HOST_NOT_FOUND) };
+        return unsafe {
+            fail(
+                NssStatus::NotFound,
+                errnop,
+                h_errnop,
+                libc::ENOENT,
+                HOST_NOT_FOUND,
+            )
+        };
     };
     let Some(family) = family_of(af).filter(|f| *f != Family::Any) else {
-        return unsafe { fail(NssStatus::Unavail, errnop, h_errnop, libc::EAFNOSUPPORT, NO_DATA) };
+        return unsafe {
+            fail(
+                NssStatus::Unavail,
+                errnop,
+                h_errnop,
+                libc::EAFNOSUPPORT,
+                NO_DATA,
+            )
+        };
     };
     let got = resolve_addresses(name, family);
     if let Some(status) = unsafe { status_of(&got, errnop, h_errnop) } {
         return status;
     }
     let Got::Value(a) = got else { unreachable!() };
-    unsafe { render_hostent(&a, af, result, buffer, buflen, errnop, h_errnop, ttlp, canonp) }
+    unsafe {
+        render_hostent(
+            &a, af, result, buffer, buflen, errnop, h_errnop, ttlp, canonp,
+        )
+    }
 }
 
+/// Resolve a host name into a caller-owned `hostent`.
+///
+/// # Safety
+///
+/// Every pointer and buffer must satisfy glibc's NSS module ABI for this
+/// entrypoint and writable out-parameters must remain valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_peios_net_gethostbyname2_r(
     name: *const c_char,
@@ -340,9 +472,27 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyname2_r(
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> NssStatus {
-    unsafe { _nss_peios_net_gethostbyname3_r(name, af, result, buffer, buflen, errnop, h_errnop, core::ptr::null_mut(), core::ptr::null_mut()) }
+    unsafe {
+        _nss_peios_net_gethostbyname3_r(
+            name,
+            af,
+            result,
+            buffer,
+            buflen,
+            errnop,
+            h_errnop,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        )
+    }
 }
 
+/// Resolve an IPv4 host name into a caller-owned `hostent`.
+///
+/// # Safety
+///
+/// Every pointer and buffer must satisfy glibc's NSS module ABI for this
+/// entrypoint and writable out-parameters must remain valid for the call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_peios_net_gethostbyname_r(
     name: *const c_char,
@@ -352,9 +502,27 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyname_r(
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> NssStatus {
-    unsafe { _nss_peios_net_gethostbyname3_r(name, libc::AF_INET, result, buffer, buflen, errnop, h_errnop, core::ptr::null_mut(), core::ptr::null_mut()) }
+    unsafe {
+        _nss_peios_net_gethostbyname3_r(
+            name,
+            libc::AF_INET,
+            result,
+            buffer,
+            buflen,
+            errnop,
+            h_errnop,
+            core::ptr::null_mut(),
+            core::ptr::null_mut(),
+        )
+    }
 }
 
+/// Resolve an address into a caller-owned `hostent`, with TTL output.
+///
+/// # Safety
+///
+/// `addr` must address `len` readable bytes for `af`; every other pointer and
+/// buffer must satisfy glibc's NSS module ABI for this entrypoint.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr2_r(
     addr: *const core::ffi::c_void,
@@ -368,7 +536,15 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr2_r(
     ttlp: *mut i32,
 ) -> NssStatus {
     if addr.is_null() {
-        return unsafe { fail(NssStatus::NotFound, errnop, h_errnop, libc::ENOENT, HOST_NOT_FOUND) };
+        return unsafe {
+            fail(
+                NssStatus::NotFound,
+                errnop,
+                h_errnop,
+                libc::ENOENT,
+                HOST_NOT_FOUND,
+            )
+        };
     }
     let address: IpAddr = match (af, len) {
         (libc::AF_INET, 4) => {
@@ -383,12 +559,28 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr2_r(
             unsafe { core::ptr::copy_nonoverlapping(addr as *const u8, o.as_mut_ptr(), 16) };
             Ipv6Addr::from(o).into()
         }
-        _ => return unsafe { fail(NssStatus::Unavail, errnop, h_errnop, libc::EAFNOSUPPORT, NO_RECOVERY) },
+        _ => {
+            return unsafe {
+                fail(
+                    NssStatus::Unavail,
+                    errnop,
+                    h_errnop,
+                    libc::EAFNOSUPPORT,
+                    NO_RECOVERY,
+                )
+            };
+        }
     };
     let got = if address.is_loopback() {
         Got::Value(Answer {
             outcome: Outcome::Found,
-            records: vec![libresolv::RecordOut { name: String::new(), rtype: 12, ttl: 0, data: vec![], text: "localhost".into() }],
+            records: vec![libresolv::RecordOut {
+                name: String::new(),
+                rtype: 12,
+                ttl: 0,
+                data: vec![],
+                text: "localhost".into(),
+            }],
             ..Default::default()
         })
     } else {
@@ -398,15 +590,34 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr2_r(
         return status;
     }
     let Got::Value(a) = got else { unreachable!() };
-    let names: Vec<&str> = a.records.iter().filter(|r| r.rtype == 12).map(|r| r.text.trim_end_matches('.')).collect();
+    let names: Vec<&str> = a
+        .records
+        .iter()
+        .filter(|r| r.rtype == 12)
+        .map(|r| r.text.trim_end_matches('.'))
+        .collect();
     let Some(first) = names.first() else {
-        return unsafe { fail(NssStatus::NotFound, errnop, h_errnop, libc::ENOENT, HOST_NOT_FOUND) };
+        return unsafe {
+            fail(
+                NssStatus::NotFound,
+                errnop,
+                h_errnop,
+                libc::ENOENT,
+                HOST_NOT_FOUND,
+            )
+        };
     };
     let mut packer = unsafe { Packer::new(buffer, buflen) };
-    let Some(name) = packer.str(first) else { return unsafe { out_of_room(errnop, h_errnop) } };
-    let Some(aliases) = packer.pointers(names.len()) else { return unsafe { out_of_room(errnop, h_errnop) } };
+    let Some(name) = packer.str(first) else {
+        return unsafe { out_of_room(errnop, h_errnop) };
+    };
+    let Some(aliases) = packer.pointers(names.len()) else {
+        return unsafe { out_of_room(errnop, h_errnop) };
+    };
     for (i, alias) in names.iter().skip(1).enumerate() {
-        let Some(p) = packer.str(alias) else { return unsafe { out_of_room(errnop, h_errnop) } };
+        let Some(p) = packer.str(alias) else {
+            return unsafe { out_of_room(errnop, h_errnop) };
+        };
         // SAFETY: `pointers` reserved `names.len()` slots; skip(1) uses one fewer.
         unsafe { aliases.add(i).write(p) };
     }
@@ -414,8 +625,12 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr2_r(
         IpAddr::V4(v) => v.octets().to_vec(),
         IpAddr::V6(v) => v.octets().to_vec(),
     };
-    let Some(addr_list) = packer.pointers(2) else { return unsafe { out_of_room(errnop, h_errnop) } };
-    let Some(slot) = packer.bytes(&bytes, 4) else { return unsafe { out_of_room(errnop, h_errnop) } };
+    let Some(addr_list) = packer.pointers(2) else {
+        return unsafe { out_of_room(errnop, h_errnop) };
+    };
+    let Some(slot) = packer.bytes(&bytes, 4) else {
+        return unsafe { out_of_room(errnop, h_errnop) };
+    };
     // SAFETY: as in render_hostent.
     unsafe {
         addr_list.write(slot);
@@ -431,6 +646,12 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr2_r(
     NssStatus::Success
 }
 
+/// Resolve an address into a caller-owned `hostent`.
+///
+/// # Safety
+///
+/// `addr` must address `len` readable bytes for `af`; every other pointer and
+/// buffer must satisfy glibc's NSS module ABI for this entrypoint.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr_r(
     addr: *const core::ffi::c_void,
@@ -442,7 +663,19 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr_r(
     errnop: *mut c_int,
     h_errnop: *mut c_int,
 ) -> NssStatus {
-    unsafe { _nss_peios_net_gethostbyaddr2_r(addr, len, af, result, buffer, buflen, errnop, h_errnop, core::ptr::null_mut()) }
+    unsafe {
+        _nss_peios_net_gethostbyaddr2_r(
+            addr,
+            len,
+            af,
+            result,
+            buffer,
+            buflen,
+            errnop,
+            h_errnop,
+            core::ptr::null_mut(),
+        )
+    }
 }
 
 #[cfg(test)]
