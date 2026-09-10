@@ -59,7 +59,13 @@ fn read_multi(key: &Key, name: &str) -> Vec<String> {
 }
 
 fn open(parent: Option<&Key>, path: &str) -> Option<Key> {
-    Key::open(parent, path, KeyAccess::QUERY_VALUE | KeyAccess::ENUMERATE_SUB_KEYS, OpenFlags::empty()).ok()
+    Key::open(
+        parent,
+        path,
+        KeyAccess::QUERY_VALUE | KeyAccess::ENUMERATE_SUB_KEYS,
+        OpenFlags::empty(),
+    )
+    .ok()
 }
 
 fn addresses(strings: &[String], what: &str) -> Vec<IpAddr> {
@@ -86,7 +92,9 @@ pub fn load() -> Config {
         .filter_map(|d| {
             let r = Name::parse(d).ok().filter(|n| !n.is_root());
             if r.is_none() {
-                log::warn(format_args!("Dns ExtraSearchDomains: ignoring malformed domain {d:?}"));
+                log::warn(format_args!(
+                    "Dns ExtraSearchDomains: ignoring malformed domain {d:?}"
+                ));
             }
             r
         })
@@ -97,7 +105,9 @@ pub fn load() -> Config {
     if let Some(hosts) = open(Some(&root), "Hosts") {
         for v in hosts.values(None) {
             let Ok(v) = v else { continue };
-            let Ok(name) = String::from_utf8(v.name.clone()) else { continue };
+            let Ok(name) = String::from_utf8(v.name.clone()) else {
+                continue;
+            };
             let Ok(name) = Name::parse(&name) else {
                 log::warn(format_args!("Dns Hosts: ignoring malformed name {name:?}"));
                 continue;
@@ -105,7 +115,12 @@ pub fn load() -> Config {
             if name.is_root() {
                 continue;
             }
-            let value = RegValue { sequence: 0, ty: v.ty, data: v.data.clone(), layer: Vec::new() };
+            let value = RegValue {
+                sequence: 0,
+                ty: v.ty,
+                data: v.data.clone(),
+                layer: Vec::new(),
+            };
             let addrs = addresses(&multi(&value).unwrap_or_default(), "Dns Hosts");
             if !addrs.is_empty() {
                 config.hosts.insert(name, addrs);
@@ -120,7 +135,12 @@ pub fn load() -> Config {
 /// it), and a watch on a key that is not there cannot see it appear.
 pub fn watch() -> peios::Result<Key> {
     use peios::registry::NotifyFilter;
-    let key = Key::open(None, libnetd::NETWORK_KEY, KeyAccess::NOTIFY, OpenFlags::empty())?;
+    let key = Key::open(
+        None,
+        libnetd::NETWORK_KEY,
+        KeyAccess::NOTIFY,
+        OpenFlags::empty(),
+    )?;
     key.notify(NotifyFilter::ALL, true)?;
     key.set_nonblocking(true)?;
     Ok(key)

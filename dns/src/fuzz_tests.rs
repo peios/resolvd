@@ -28,12 +28,15 @@ impl Rng {
         self.next() as u8
     }
     pub fn chance(&mut self, one_in: u64) -> bool {
-        self.next() % one_in == 0
+        self.next().is_multiple_of(one_in)
     }
 }
 
 fn iters() -> usize {
-    std::env::var("DNS_FUZZ_ITERS").ok().and_then(|s| s.parse().ok()).unwrap_or(20_000)
+    std::env::var("DNS_FUZZ_ITERS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20_000)
 }
 
 fn random_name(rng: &mut Rng) -> Name {
@@ -52,7 +55,9 @@ fn random_record(rng: &mut Rng) -> Record {
     let ttl = rng.next() as u32;
     let rdata = match rng.below(11) {
         0 => RData::A(Ipv4Addr::from(rng.next() as u32)),
-        1 => RData::Aaaa(Ipv6Addr::from(rng.next() as u128 | ((rng.next() as u128) << 64))),
+        1 => RData::Aaaa(Ipv6Addr::from(
+            rng.next() as u128 | ((rng.next() as u128) << 64),
+        )),
         2 => RData::Cname(random_name(rng)),
         3 => RData::Ptr(random_name(rng)),
         4 => RData::Ns(random_name(rng)),
@@ -65,9 +70,21 @@ fn random_record(rng: &mut Rng) -> Record {
             expire: rng.next() as u32,
             minimum: rng.next() as u32,
         },
-        6 => RData::Mx { preference: rng.next() as u16, exchange: random_name(rng) },
-        7 => RData::Srv { priority: rng.next() as u16, weight: rng.next() as u16, port: rng.next() as u16, target: random_name(rng) },
-        8 => RData::Txt((0..rng.below(4)).map(|_| (0..rng.below(300)).map(|_| rng.byte()).collect()).collect()),
+        6 => RData::Mx {
+            preference: rng.next() as u16,
+            exchange: random_name(rng),
+        },
+        7 => RData::Srv {
+            priority: rng.next() as u16,
+            weight: rng.next() as u16,
+            port: rng.next() as u16,
+            target: random_name(rng),
+        },
+        8 => RData::Txt(
+            (0..rng.below(4))
+                .map(|_| (0..rng.below(300)).map(|_| rng.byte()).collect())
+                .collect(),
+        ),
         9 => RData::Opt((0..rng.below(20)).map(|_| rng.byte()).collect()),
         _ => RData::Unknown((0..rng.below(40)).map(|_| rng.byte()).collect()),
     };
@@ -87,7 +104,11 @@ fn random_message(rng: &mut Rng) -> Message {
     m.header.truncated = rng.chance(4);
     m.header.recursion_desired = rng.chance(2);
     for _ in 0..rng.below(3) {
-        m.questions.push(Question { name: random_name(rng), rtype: rng.next() as u16, class: rng.next() as u16 });
+        m.questions.push(Question {
+            name: random_name(rng),
+            rtype: rng.next() as u16,
+            class: rng.next() as u16,
+        });
     }
     for section in [&mut m.answers, &mut m.authority, &mut m.additional] {
         for _ in 0..rng.below(4) {
@@ -108,12 +129,19 @@ fn fuzz_encode_decode_round_trip() {
             Err(Error::TooLarge) => continue,
             Err(e) => panic!("iteration {i}: encode failed: {e}"),
         };
-        let back = Message::decode(&bytes).unwrap_or_else(|e| panic!("iteration {i}: decode of our own encoding failed: {e}\n{m:?}"));
+        let back = Message::decode(&bytes).unwrap_or_else(|e| {
+            panic!("iteration {i}: decode of our own encoding failed: {e}\n{m:?}")
+        });
         // TXT strings longer than 255 are truncated on encode; compare
         // everything else exactly.
         let normalise = |m: &Message| {
             let mut m = m.clone();
-            for r in m.answers.iter_mut().chain(&mut m.authority).chain(&mut m.additional) {
+            for r in m
+                .answers
+                .iter_mut()
+                .chain(&mut m.authority)
+                .chain(&mut m.additional)
+            {
                 if let RData::Txt(s) = &mut r.rdata {
                     for x in s.iter_mut() {
                         x.truncate(255);
@@ -124,7 +152,11 @@ fn fuzz_encode_decode_round_trip() {
         };
         assert_eq!(normalise(&back), normalise(&m), "iteration {i}");
         // Re-encoding the decoded form is byte-identical.
-        assert_eq!(back.encode().unwrap(), bytes, "iteration {i}: not canonical");
+        assert_eq!(
+            back.encode().unwrap(),
+            bytes,
+            "iteration {i}: not canonical"
+        );
     }
 }
 
@@ -170,11 +202,12 @@ fn fuzz_mutations_never_panic() {
                 }
             }
         }
-        if let Ok(m) = Message::decode(&bytes) {
-            if let Ok(again) = m.encode() {
-                let m2 = Message::decode(&again).unwrap_or_else(|e| panic!("iteration {i}: re-decode failed: {e}"));
-                assert_eq!(m2, m, "iteration {i}: not idempotent");
-            }
+        if let Ok(m) = Message::decode(&bytes)
+            && let Ok(again) = m.encode()
+        {
+            let m2 = Message::decode(&again)
+                .unwrap_or_else(|e| panic!("iteration {i}: re-decode failed: {e}"));
+            assert_eq!(m2, m, "iteration {i}: not idempotent");
         }
     }
 }
@@ -186,7 +219,10 @@ fn fuzz_names() {
     for i in 0..iters() {
         let n = random_name(&mut rng);
         let text = n.to_string();
-        if n.labels().iter().all(|l| l.iter().all(|b| b.is_ascii_graphic() && *b != b'.' && *b != b'\\')) {
+        if n.labels().iter().all(|l| {
+            l.iter()
+                .all(|b| b.is_ascii_graphic() && *b != b'.' && *b != b'\\')
+        }) {
             assert_eq!(Name::parse(&text).unwrap(), n, "iteration {i}: {text}");
         }
         let _ = n.reverse_address();
@@ -195,7 +231,15 @@ fn fuzz_names() {
         assert_eq!(Name::reverse_v4(v4).reverse_address(), Some(v4.into()));
         let v6 = Ipv6Addr::from(rng.next() as u128 ^ ((rng.next() as u128) << 64));
         assert_eq!(Name::reverse_v6(v6).reverse_address(), Some(v6.into()));
-        let s: String = (0..rng.below(300)).map(|_| if rng.chance(5) { '.' } else { (b'a' + rng.below(26) as u8) as char }).collect();
+        let s: String = (0..rng.below(300))
+            .map(|_| {
+                if rng.chance(5) {
+                    '.'
+                } else {
+                    (b'a' + rng.below(26) as u8) as char
+                }
+            })
+            .collect();
         let _ = Name::parse(&s);
     }
 }

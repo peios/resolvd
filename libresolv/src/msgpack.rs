@@ -55,7 +55,9 @@ pub struct Writer {
 
 impl Writer {
     pub fn new() -> Writer {
-        Writer { buf: Vec::with_capacity(256) }
+        Writer {
+            buf: Vec::with_capacity(256),
+        }
     }
 
     pub fn write_nil(&mut self) -> &mut Self {
@@ -184,7 +186,11 @@ const MAX_DEPTH: u32 = 32;
 
 impl<'a> Reader<'a> {
     pub fn new(buf: &'a [u8]) -> Reader<'a> {
-        Reader { buf, pos: 0, depth: 0 }
+        Reader {
+            buf,
+            pos: 0,
+            depth: 0,
+        }
     }
 
     pub fn remaining(&self) -> usize {
@@ -198,7 +204,10 @@ impl<'a> Reader<'a> {
     }
 
     fn take(&mut self, n: usize) -> Result<&'a [u8]> {
-        let s = self.buf.get(self.pos..self.pos + n).ok_or(Error::Truncated)?;
+        let s = self
+            .buf
+            .get(self.pos..self.pos + n)
+            .ok_or(Error::Truncated)?;
         self.pos += n;
         Ok(s)
     }
@@ -382,7 +391,11 @@ mod tests {
         let long = "x".repeat(300);
         let bin = vec![7u8; 70000];
         let mut w = Writer::new();
-        w.write_map(2).write_str("s").write_str(&long).write_str("b").write_bin(&bin);
+        w.write_map(2)
+            .write_str("s")
+            .write_str(&long)
+            .write_str("b")
+            .write_bin(&bin);
         let bytes = w.into_bytes();
         let mut r = Reader::new(&bytes);
         assert_eq!(r.read_map().unwrap(), 2);
@@ -395,7 +408,12 @@ mod tests {
     #[test]
     fn skip_walks_nested_values_and_refuses_lies() {
         let mut w = Writer::new();
-        w.write_array(2).write_map(1).write_str("k").write_array(1).write_uint(1).write_str("after");
+        w.write_array(2)
+            .write_map(1)
+            .write_str("k")
+            .write_array(1)
+            .write_uint(1)
+            .write_str("after");
         let bytes = w.into_bytes();
         let mut r = Reader::new(&bytes);
         assert_eq!(r.read_array().unwrap(), 2);
@@ -407,6 +425,9 @@ mod tests {
         let mut deep = vec![0x91u8; 40];
         deep.push(0xc0);
         assert_eq!(Reader::new(&deep).skip(), Err(Error::Depth));
-        assert_eq!(Reader::new(&[0xca, 0, 0, 0, 0]).skip(), Err(Error::Unsupported));
+        assert_eq!(
+            Reader::new(&[0xca, 0, 0, 0, 0]).skip(),
+            Err(Error::Unsupported)
+        );
     }
 }

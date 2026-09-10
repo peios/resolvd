@@ -22,7 +22,10 @@ use std::time::Instant;
 
 use dns::{Name, Record};
 use libnetd::{DnsScope, Snapshot};
-use libresolv::{Addresses, Answer, AddressOut, Counters, Family, RecordOut, Reply, Request, ScopeStatus, StatusReport, Validation};
+use libresolv::{
+    AddressOut, Addresses, Answer, Counters, Family, RecordOut, Reply, Request, ScopeStatus,
+    StatusReport, Validation,
+};
 use peios::registry::Key;
 
 use engine::{Action, Completion, Engine, Qid, Scope};
@@ -64,7 +67,8 @@ impl Resolvd {
             return;
         }
         self.control = control::ControlObject::new(fresh.control_security.as_deref());
-        self.engine.set_fallback(fresh.servers.clone(), fresh.search.clone());
+        self.engine
+            .set_fallback(fresh.servers.clone(), fresh.search.clone());
         self.engine.set_hosts(fresh.hosts.clone());
         self.config = fresh;
         log::info(format_args!("configuration changed"));
@@ -72,14 +76,33 @@ impl Resolvd {
 
     fn apply_snapshot(&mut self, snapshot: Snapshot) {
         // netd's name when it set one; else whatever the kernel has.
-        let hostname = if snapshot.hostname.is_empty() { kernel_hostname() } else { Some(snapshot.hostname.clone()) };
+        let hostname = if snapshot.hostname.is_empty() {
+            kernel_hostname()
+        } else {
+            Some(snapshot.hostname.clone())
+        };
         self.engine.set_hostname(hostname.as_deref());
         let scopes: Vec<Scope> = snapshot.scopes.iter().map(to_scope).collect();
         let summary: Vec<String> = scopes
             .iter()
-            .map(|s| format!("{}: {} server(s), {} domain(s){}", s.interface, s.servers.len(), s.domains.len(), if s.default_route { ", default" } else { "" }))
+            .map(|s| {
+                format!(
+                    "{}: {} server(s), {} domain(s){}",
+                    s.interface,
+                    s.servers.len(),
+                    s.domains.len(),
+                    if s.default_route { ", default" } else { "" }
+                )
+            })
             .collect();
-        log::info(format_args!("netd: {}", if summary.is_empty() { "no scopes".to_owned() } else { summary.join("; ") }));
+        log::info(format_args!(
+            "netd: {}",
+            if summary.is_empty() {
+                "no scopes".to_owned()
+            } else {
+                summary.join("; ")
+            }
+        ));
         self.engine.set_scopes(scopes);
     }
 
@@ -88,7 +111,12 @@ impl Resolvd {
         let mut follow_ups = Vec::new();
         for action in actions {
             match action {
-                Action::Send { tx, server, tcp, payload } => {
+                Action::Send {
+                    tx,
+                    server,
+                    tcp,
+                    payload,
+                } => {
                     if let Err(e) = self.upstream.send(tx, server, tcp, payload) {
                         log::warn(format_args!("upstream {server}: {e}"));
                         follow_ups.extend(self.engine.failed(tx, now));
@@ -104,10 +132,16 @@ impl Resolvd {
     }
 
     fn deliver(&mut self, qid: Qid, completion: Completion) {
-        let Some(waiter) = self.waiters.remove(&qid) else { return };
+        let Some(waiter) = self.waiters.remove(&qid) else {
+            return;
+        };
         match (waiter, completion) {
-            (Waiter::Native(mut stream), Completion::Answer(a)) => control::respond(&mut stream, &Reply::Answer(to_answer(&a))),
-            (Waiter::Native(mut stream), Completion::Addresses(a)) => control::respond(&mut stream, &Reply::Addresses(to_addresses(&a))),
+            (Waiter::Native(mut stream), Completion::Answer(a)) => {
+                control::respond(&mut stream, &Reply::Answer(to_answer(&a)))
+            }
+            (Waiter::Native(mut stream), Completion::Addresses(a)) => {
+                control::respond(&mut stream, &Reply::Addresses(to_addresses(&a)))
+            }
             (Waiter::Stub(origin), Completion::Answer(a)) => self.stub.answer(origin, &a),
             (Waiter::Stub(_), Completion::Addresses(_)) => {}
         }
@@ -130,7 +164,11 @@ impl Resolvd {
                 control::respond(&mut stream, &Reply::Ok);
                 return;
             }
-            Request::Resolve { name, rtype, no_cache } => self.engine.resolve(qid, &name, rtype, no_cache, now),
+            Request::Resolve {
+                name,
+                rtype,
+                no_cache,
+            } => self.engine.resolve(qid, &name, rtype, no_cache, now),
             Request::Lookup { name, family } => {
                 let family = match family {
                     Family::Any => engine::Family::Any,
@@ -147,7 +185,9 @@ impl Resolvd {
 
     fn handle_stub(&mut self, incoming: Vec<Incoming>, now: Instant) {
         for i in incoming {
-            let Incoming::Query { origin } = i else { continue };
+            let Incoming::Query { origin } = i else {
+                continue;
+            };
             let question = match &origin {
                 Origin::Udp { query, .. } | Origin::Tcp { query, .. } => query.question().cloned(),
             };
@@ -163,7 +203,11 @@ impl Resolvd {
         let demoted = self.engine.demoted(now);
         let c = &self.engine.counters;
         StatusReport {
-            hostname: self.engine.hostname().map(|n| n.to_string()).unwrap_or_default(),
+            hostname: self
+                .engine
+                .hostname()
+                .map(|n| n.to_string())
+                .unwrap_or_default(),
             netd: self.netd.connected(),
             scopes: self
                 .engine
@@ -176,11 +220,25 @@ impl Resolvd {
                     default_route: s.default_route,
                     exclusive: s.exclusive,
                     metric: s.metric,
-                    subnets: s.addresses.iter().map(|(a, p)| format!("{a}/{p}")).collect(),
-                    demoted: s.servers.iter().filter(|a| demoted.contains(a)).map(|a| a.to_string()).collect(),
+                    subnets: s
+                        .addresses
+                        .iter()
+                        .map(|(a, p)| format!("{a}/{p}"))
+                        .collect(),
+                    demoted: s
+                        .servers
+                        .iter()
+                        .filter(|a| demoted.contains(a))
+                        .map(|a| a.to_string())
+                        .collect(),
                 })
                 .collect(),
-            fallback_servers: self.engine.fallback_servers().iter().map(|a| a.to_string()).collect(),
+            fallback_servers: self
+                .engine
+                .fallback_servers()
+                .iter()
+                .map(|a| a.to_string())
+                .collect(),
             cache_entries: self.engine.cache_entries() as u64,
             counters: Counters {
                 queries: c.queries,
@@ -200,7 +258,12 @@ fn to_scope(s: &DnsScope) -> Scope {
         id: s.ifid.clone(),
         interface: s.name.clone(),
         servers: s.servers.iter().filter_map(|a| a.parse().ok()).collect(),
-        domains: s.domains.iter().filter_map(|d| Name::parse(d).ok()).filter(|n| !n.is_root()).collect(),
+        domains: s
+            .domains
+            .iter()
+            .filter_map(|d| Name::parse(d).ok())
+            .filter(|n| !n.is_root())
+            .collect(),
         addresses: s
             .addresses
             .iter()
@@ -217,7 +280,13 @@ fn to_scope(s: &DnsScope) -> Scope {
 }
 
 fn to_record(r: &Record) -> RecordOut {
-    RecordOut { name: r.name.to_string(), rtype: r.rtype, ttl: r.ttl, data: r.rdata_bytes(), text: r.rdata_text() }
+    RecordOut {
+        name: r.name.to_string(),
+        rtype: r.rtype,
+        ttl: r.ttl,
+        data: r.rdata_bytes(),
+        text: r.rdata_text(),
+    }
 }
 
 fn to_answer(a: &engine::Answer) -> Answer {
@@ -236,7 +305,14 @@ fn to_addresses(a: &engine::Addresses) -> Addresses {
     Addresses {
         outcome: a.outcome,
         canonical: a.canonical.to_string(),
-        addresses: a.addresses.iter().map(|(address, ttl)| AddressOut { address: *address, ttl: *ttl }).collect(),
+        addresses: a
+            .addresses
+            .iter()
+            .map(|(address, ttl)| AddressOut {
+                address: *address,
+                ttl: *ttl,
+            })
+            .collect(),
         source: a.source.as_str().to_owned(),
         validation: Validation::Unvalidated,
     }
@@ -251,11 +327,17 @@ fn kernel_hostname() -> Option<String> {
     }
     let end = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     let s = String::from_utf8_lossy(&buf[..end]).into_owned();
-    if s.is_empty() || s == "(none)" { None } else { Some(s) }
+    if s.is_empty() || s == "(none)" {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 fn notify_ready() {
-    let Ok(path) = std::env::var("NOTIFY_SOCKET") else { return };
+    let Ok(path) = std::env::var("NOTIFY_SOCKET") else {
+        return;
+    };
     match UnixDatagram::unbound() {
         Ok(s) => {
             if let Err(e) = s.send_to(b"READY=1", &path) {
@@ -268,10 +350,16 @@ fn notify_ready() {
 
 fn seed() -> u64 {
     let mut b = [0u8; 8];
-    if std::fs::File::open("/dev/urandom").and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b)).is_ok() {
+    if std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b))
+        .is_ok()
+    {
         return u64::from_le_bytes(b);
     }
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(1)
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos() as u64)
+        .unwrap_or(1)
 }
 
 fn main() -> ExitCode {
@@ -285,7 +373,11 @@ fn main() -> ExitCode {
     let stub = match stub::Stub::open() {
         Ok(s) => s,
         Err(e) => {
-            log::error(format_args!("stub listener on {}:{}: {e}", libresolv::STUB_ADDRESS, libresolv::STUB_PORT));
+            log::error(format_args!(
+                "stub listener on {}:{}: {e}",
+                libresolv::STUB_ADDRESS,
+                libresolv::STUB_PORT
+            ));
             return ExitCode::FAILURE;
         }
     };
@@ -294,7 +386,9 @@ fn main() -> ExitCode {
     let mut watch: Option<Key> = match config::watch() {
         Ok(k) => Some(k),
         Err(e) => {
-            log::warn(format_args!("registry watch unavailable ({e}); configuration is read once"));
+            log::warn(format_args!(
+                "registry watch unavailable ({e}); configuration is read once"
+            ));
             None
         }
     };
@@ -315,7 +409,12 @@ fn main() -> ExitCode {
         next_id: 1,
     };
     r.netd.maintain(now);
-    log::info(format_args!("listening on {} and {}:{}", libresolv::SOCKET_PATH, libresolv::STUB_ADDRESS, libresolv::STUB_PORT));
+    log::info(format_args!(
+        "listening on {} and {}:{}",
+        libresolv::SOCKET_PATH,
+        libresolv::STUB_ADDRESS,
+        libresolv::STUB_PORT
+    ));
     notify_ready();
 
     let mut watch_buffer = vec![0u8; 16384];
@@ -330,26 +429,54 @@ fn main() -> ExitCode {
         consider(r.engine.next_deadline());
         consider(r.netd.next_deadline());
         consider(r.stub.next_deadline());
-        consider(r.clients.values().map(|c| c.since + control::CLIENT_TIMEOUT).min());
+        consider(
+            r.clients
+                .values()
+                .map(|c| c.since + control::CLIENT_TIMEOUT)
+                .min(),
+        );
         let timeout_ms: i32 = match deadline {
-            Some(t) => t.saturating_duration_since(now).as_millis().min(i32::MAX as u128) as i32,
+            Some(t) => t
+                .saturating_duration_since(now)
+                .as_millis()
+                .min(i32::MAX as u128) as i32,
             None => -1,
         };
 
         // Poll set: [listener, stub udp, stub tcp, netd?, watch?, clients..., stub clients..., upstream...]
         let mut fds: Vec<libc::pollfd> = Vec::new();
         fn push(fds: &mut Vec<libc::pollfd>, fd: i32, events: i16) -> usize {
-            fds.push(libc::pollfd { fd, events, revents: 0 });
+            fds.push(libc::pollfd {
+                fd,
+                events,
+                revents: 0,
+            });
             fds.len() - 1
         }
         push(&mut fds, listener.as_raw_fd(), libc::POLLIN);
         push(&mut fds, r.stub.udp.as_raw_fd(), libc::POLLIN);
         push(&mut fds, r.stub.tcp.as_raw_fd(), libc::POLLIN);
         let netd_slot = r.netd.fd().map(|fd| push(&mut fds, fd, libc::POLLIN));
-        let watch_slot = watch.as_ref().map(|w| push(&mut fds, w.as_raw_fd(), libc::POLLIN));
-        let client_slots: Vec<(u64, usize)> = r.clients.iter().map(|(id, c)| (*id, push(&mut fds, c.stream.as_raw_fd(), libc::POLLIN))).collect();
-        let stub_slots: Vec<(u64, usize)> = r.stub.client_fds().into_iter().map(|(id, fd)| (id, push(&mut fds, fd, libc::POLLIN))).collect();
-        let upstream_slots: Vec<(u64, usize)> = r.upstream.fds().into_iter().map(|(tx, fd, ev)| (tx, push(&mut fds, fd, ev))).collect();
+        let watch_slot = watch
+            .as_ref()
+            .map(|w| push(&mut fds, w.as_raw_fd(), libc::POLLIN));
+        let client_slots: Vec<(u64, usize)> = r
+            .clients
+            .iter()
+            .map(|(id, c)| (*id, push(&mut fds, c.stream.as_raw_fd(), libc::POLLIN)))
+            .collect();
+        let stub_slots: Vec<(u64, usize)> = r
+            .stub
+            .client_fds()
+            .into_iter()
+            .map(|(id, fd)| (id, push(&mut fds, fd, libc::POLLIN)))
+            .collect();
+        let upstream_slots: Vec<(u64, usize)> = r
+            .upstream
+            .fds()
+            .into_iter()
+            .map(|(tx, fd, ev)| (tx, push(&mut fds, fd, ev)))
+            .collect();
 
         // SAFETY: `fds` is a live, exclusively borrowed array for the call.
         let rc = unsafe { libc::poll(fds.as_mut_ptr(), fds.len() as libc::nfds_t, timeout_ms) };
@@ -388,10 +515,10 @@ fn main() -> ExitCode {
             r.stub.accept(now, MAX_PENDING_CLIENTS);
         }
         for (id, slot) in &stub_slots {
-            if fds[*slot].revents != 0 {
-                if let Some(incoming) = r.stub.service_client(*id) {
-                    r.handle_stub(vec![incoming], now);
-                }
+            if fds[*slot].revents != 0
+                && let Some(incoming) = r.stub.service_client(*id)
+            {
+                r.handle_stub(vec![incoming], now);
             }
         }
         if fds[0].revents != 0 {
@@ -419,7 +546,9 @@ fn main() -> ExitCode {
             if fds[*slot].revents == 0 {
                 continue;
             }
-            let Some(client) = r.clients.get_mut(id) else { continue };
+            let Some(client) = r.clients.get_mut(id) else {
+                continue;
+            };
             match client.read() {
                 control::Progress::Incomplete => {}
                 control::Progress::Closed => {
@@ -431,24 +560,23 @@ fn main() -> ExitCode {
                 }
             }
         }
-        if let Some(slot) = netd_slot {
-            if fds[slot].revents != 0 {
-                for snapshot in r.netd.service(now) {
-                    r.apply_snapshot(snapshot);
-                }
+        if let Some(slot) = netd_slot
+            && fds[slot].revents != 0
+        {
+            for snapshot in r.netd.service(now) {
+                r.apply_snapshot(snapshot);
             }
         }
-        if let Some(slot) = watch_slot {
-            if fds[slot].revents != 0 {
-                if let Some(w) = &watch {
-                    match w.read_watch_events(&mut watch_buffer) {
-                        Ok(events) if !events.is_empty() => r.apply_config(config::load()),
-                        Ok(_) => {}
-                        Err(e) => {
-                            log::warn(format_args!("registry watch: {e}; re-arming"));
-                            watch = config::watch().ok();
-                        }
-                    }
+        if let Some(slot) = watch_slot
+            && fds[slot].revents != 0
+            && let Some(w) = &watch
+        {
+            match w.read_watch_events(&mut watch_buffer) {
+                Ok(events) if !events.is_empty() => r.apply_config(config::load()),
+                Ok(_) => {}
+                Err(e) => {
+                    log::warn(format_args!("registry watch: {e}; re-arming"));
+                    watch = config::watch().ok();
                 }
             }
         }
@@ -458,6 +586,7 @@ fn main() -> ExitCode {
         r.perform(actions, now);
         r.netd.maintain(now);
         r.stub.expire(now);
-        r.clients.retain(|_, c| now.duration_since(c.since) < control::CLIENT_TIMEOUT);
+        r.clients
+            .retain(|_, c| now.duration_since(c.since) < control::CLIENT_TIMEOUT);
     }
 }

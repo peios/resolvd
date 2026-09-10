@@ -1,0 +1,8 @@
+[package]
+name         = "dev.peios.resolvd-debugsource"
+architecture = "noarch"
+description  = "Debug sources for resolvd, resolv, and the Peios NSS resolver"
+
+[files]
+"@source:LICENSE"   = "usr/share/licenses/dev.peios.resolvd-debugsource/LICENSE"
+":usr/src/debug/**" = "usr/src/debug"

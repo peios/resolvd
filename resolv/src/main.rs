@@ -16,7 +16,8 @@ use std::process::ExitCode;
 use libresolv::{Family, Outcome, Reply, Request, SOCKET_PATH};
 
 fn call(request: &Request) -> Result<Reply, String> {
-    let mut stream = UnixStream::connect(SOCKET_PATH).map_err(|e| format!("resolvd is not reachable at {SOCKET_PATH}: {e}"))?;
+    let mut stream = UnixStream::connect(SOCKET_PATH)
+        .map_err(|e| format!("resolvd is not reachable at {SOCKET_PATH}: {e}"))?;
     libresolv::call(&mut stream, request).map_err(|e| e.to_string())
 }
 
@@ -37,8 +38,18 @@ fn status() -> ExitCode {
         }
         Ok(_) => return ExitCode::FAILURE,
     };
-    println!("hostname   {}", if s.hostname.is_empty() { "(unset)" } else { &s.hostname });
-    println!("netd       {}", if s.netd { "connected" } else { "not connected" });
+    println!(
+        "hostname   {}",
+        if s.hostname.is_empty() {
+            "(unset)"
+        } else {
+            &s.hostname
+        }
+    );
+    println!(
+        "netd       {}",
+        if s.netd { "connected" } else { "not connected" }
+    );
     println!("cache      {} entries", s.cache_entries);
     if s.scopes.is_empty() {
         println!("scopes     (none)");
@@ -52,9 +63,22 @@ fn status() -> ExitCode {
         if sc.exclusive {
             flags.push("exclusive");
         }
-        println!("{}  metric {}{}", sc.interface, sc.metric, if flags.is_empty() { String::new() } else { format!("  [{}]", flags.join(", ")) });
+        println!(
+            "{}  metric {}{}",
+            sc.interface,
+            sc.metric,
+            if flags.is_empty() {
+                String::new()
+            } else {
+                format!("  [{}]", flags.join(", "))
+            }
+        );
         for server in &sc.servers {
-            let demoted = if sc.demoted.contains(server) { "  (demoted)" } else { "" };
+            let demoted = if sc.demoted.contains(server) {
+                "  (demoted)"
+            } else {
+                ""
+            };
             println!("  server   {server}{demoted}");
         }
         for d in &sc.domains {
@@ -72,7 +96,13 @@ fn status() -> ExitCode {
     println!();
     println!(
         "queries {}  synthetic {}  cache-hits {}  upstream sent {} answered {} failed {}  refused {}",
-        c.queries, c.synthetic, c.cache_hits, c.upstream_sent, c.upstream_answered, c.upstream_failed, c.refused
+        c.queries,
+        c.synthetic,
+        c.cache_hits,
+        c.upstream_sent,
+        c.upstream_answered,
+        c.upstream_failed,
+        c.refused
     );
     ExitCode::SUCCESS
 }
@@ -82,21 +112,37 @@ fn query(name: &str, rtype: &str, no_cache: bool) -> ExitCode {
         eprintln!("resolv: unknown record type {rtype:?}");
         return ExitCode::FAILURE;
     };
-    match call(&Request::Resolve { name: name.to_owned(), rtype, no_cache }) {
+    match call(&Request::Resolve {
+        name: name.to_owned(),
+        rtype,
+        no_cache,
+    }) {
         Ok(Reply::Answer(a)) => {
             println!(
                 "{}  {}{}{}  validation {}",
                 a.outcome.as_str(),
                 a.source,
-                a.server.as_ref().map(|s| format!(" via {s}")).unwrap_or_default(),
-                a.interface.as_ref().map(|i| format!(" on {i}")).unwrap_or_default(),
+                a.server
+                    .as_ref()
+                    .map(|s| format!(" via {s}"))
+                    .unwrap_or_default(),
+                a.interface
+                    .as_ref()
+                    .map(|i| format!(" on {i}"))
+                    .unwrap_or_default(),
                 a.validation.as_str()
             );
             if a.outcome == Outcome::Found && a.rcode != 0 {
                 println!("rcode {}", dns::rcode::name(a.rcode as u8));
             }
             for r in &a.records {
-                println!("{}\t{}\t{}\t{}", r.name, r.ttl, dns::rtype::name(r.rtype), r.text);
+                println!(
+                    "{}\t{}\t{}\t{}",
+                    r.name,
+                    r.ttl,
+                    dns::rtype::name(r.rtype),
+                    r.text
+                );
             }
             outcome_code(a.outcome)
         }
@@ -109,9 +155,17 @@ fn query(name: &str, rtype: &str, no_cache: bool) -> ExitCode {
 }
 
 fn lookup(name: &str) -> ExitCode {
-    match call(&Request::Lookup { name: name.to_owned(), family: Family::Any }) {
+    match call(&Request::Lookup {
+        name: name.to_owned(),
+        family: Family::Any,
+    }) {
         Ok(Reply::Addresses(a)) => {
-            println!("{}  {}  canonical {}", a.outcome.as_str(), a.source, a.canonical);
+            println!(
+                "{}  {}  canonical {}",
+                a.outcome.as_str(),
+                a.source,
+                a.canonical
+            );
             for x in &a.addresses {
                 println!("{}\t{}", x.address, x.ttl);
             }
@@ -158,15 +212,27 @@ fn flush() -> ExitCode {
 }
 
 fn usage() -> ExitCode {
-    eprintln!("usage: resolv status | query <name> [type] [--no-cache] | lookup <name> | reverse <address> | flush");
+    eprintln!(
+        "usage: resolv version | status | query <name> [type] [--no-cache] | lookup <name> | reverse <address> | flush"
+    );
     ExitCode::from(64)
+}
+
+fn version() -> ExitCode {
+    println!("resolv {}", env!("CARGO_PKG_VERSION"));
+    ExitCode::SUCCESS
 }
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let no_cache = args.iter().any(|a| a == "--no-cache");
-    let args: Vec<&str> = args.iter().map(String::as_str).filter(|a| *a != "--no-cache").collect();
+    let args: Vec<&str> = args
+        .iter()
+        .map(String::as_str)
+        .filter(|a| *a != "--no-cache")
+        .collect();
     match args.as_slice() {
+        ["version"] | ["--version"] => version(),
         ["status"] => status(),
         ["query", name] => query(name, "A", no_cache),
         ["query", name, rtype] => query(name, rtype, no_cache),

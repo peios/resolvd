@@ -18,9 +18,19 @@ members = ["dns", "libresolv", "resolvd", "resolv", "nss"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.98.1"
 license = "MIT"
 publish = false
 
 [workspace.dependencies]
-libc = "0.2"
+libc = "0.2.189"
+# These sibling paths keep the unreleased workspace buildable. The production
+# release replaces both this edge and resolvd's libnetd edge with immutable git
+# revisions together; pinning only one creates two incompatible peios-sys
+# instances because both link the same native ABI.
 peios = { path = "../peios-rs/peios" }
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+panic = "abort"

@@ -1,0 +1,10 @@
+[package]
+name        = "dev.peios.resolvd-nss-debuginfo"
+description = "Debugging symbols for the Peios NSS host-resolution module"
+
+[dependencies]
+"dev.peios.resolvd-nss" = "= {{version}}-7"
+
+[files]
+"@source:LICENSE"             = "usr/share/licenses/dev.peios.resolvd-nss-debuginfo/LICENSE"
+":debug/nss/usr/lib/debug/**" = "usr/lib/debug"

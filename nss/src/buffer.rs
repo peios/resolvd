@@ -26,7 +26,7 @@ impl Packer {
 
     /// Reserve `size` bytes at `align`; the offset, or `None` when full.
     fn offset(&mut self, size: usize, align: usize) -> Option<usize> {
-        let start = (self.used + align - 1) / align * align;
+        let start = self.used.div_ceil(align) * align;
         let end = start.checked_add(size)?;
         if end > self.len {
             return None;

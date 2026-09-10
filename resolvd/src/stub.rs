@@ -52,12 +52,19 @@ pub enum Incoming {
 
 impl Stub {
     pub fn open() -> io::Result<Stub> {
-        let addr: SocketAddr = format!("{STUB_ADDRESS}:{STUB_PORT}").parse().expect("literal");
+        let addr: SocketAddr = format!("{STUB_ADDRESS}:{STUB_PORT}")
+            .parse()
+            .expect("literal");
         let udp = UdpSocket::bind(addr)?;
         udp.set_nonblocking(true)?;
         let tcp = TcpListener::bind(addr)?;
         tcp.set_nonblocking(true)?;
-        Ok(Stub { udp, tcp, clients: HashMap::new(), next_client: 1 })
+        Ok(Stub {
+            udp,
+            tcp,
+            clients: HashMap::new(),
+            next_client: 1,
+        })
     }
 
     /// Read every datagram waiting.
@@ -73,7 +80,9 @@ impl Stub {
                         continue;
                     }
                     match parse_query(&buf[..n]) {
-                        Ok(query) => out.push(Incoming::Query { origin: Origin::Udp { peer, query } }),
+                        Ok(query) => out.push(Incoming::Query {
+                            origin: Origin::Udp { peer, query },
+                        }),
                         Err(Some(reply)) => {
                             let _ = self.udp.send_to(&reply, peer);
                         }
@@ -97,12 +106,22 @@ impl Stub {
         loop {
             match self.tcp.accept() {
                 Ok((stream, peer)) => {
-                    if self.clients.len() >= limit || !peer.ip().is_loopback() || stream.set_nonblocking(true).is_err() {
+                    if self.clients.len() >= limit
+                        || !peer.ip().is_loopback()
+                        || stream.set_nonblocking(true).is_err()
+                    {
                         continue;
                     }
                     let id = self.next_client;
                     self.next_client += 1;
-                    self.clients.insert(id, TcpClient { stream, buf: Vec::with_capacity(512), since: now });
+                    self.clients.insert(
+                        id,
+                        TcpClient {
+                            stream,
+                            buf: Vec::with_capacity(512),
+                            since: now,
+                        },
+                    );
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
@@ -115,7 +134,10 @@ impl Stub {
     }
 
     pub fn client_fds(&self) -> Vec<(u64, RawFd)> {
-        self.clients.iter().map(|(id, c)| (*id, c.stream.as_raw_fd())).collect()
+        self.clients
+            .iter()
+            .map(|(id, c)| (*id, c.stream.as_raw_fd()))
+            .collect()
     }
 
     /// Progress a TCP client. `Some` means it produced a query (or is
@@ -153,7 +175,12 @@ impl Stub {
         }
         let mut client = self.clients.remove(&id)?;
         match parse_query(&client.buf[2..2 + len]) {
-            Ok(query) => Some(Incoming::Query { origin: Origin::Tcp { stream: client.stream, query } }),
+            Ok(query) => Some(Incoming::Query {
+                origin: Origin::Tcp {
+                    stream: client.stream,
+                    query,
+                },
+            }),
             Err(Some(reply)) => {
                 send_tcp(&mut client.stream, &reply);
                 Some(Incoming::Nothing)
@@ -164,7 +191,8 @@ impl Stub {
 
     /// Drop TCP clients that have sat too long.
     pub fn expire(&mut self, now: Instant) {
-        self.clients.retain(|_, c| now.duration_since(c.since) < TCP_TIMEOUT);
+        self.clients
+            .retain(|_, c| now.duration_since(c.since) < TCP_TIMEOUT);
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
@@ -222,7 +250,8 @@ pub fn parse_query(bytes: &[u8]) -> Result<Message, Option<Vec<u8>>> {
         let mut r = Message::reply_to(&message);
         r.header.rcode = code;
         if let Some(opt) = message.opt() {
-            r.additional.push(Record::opt(dns::EDNS_UDP_SIZE, false).with_class(opt.class));
+            r.additional
+                .push(Record::opt(dns::EDNS_UDP_SIZE, false).with_class(opt.class));
         }
         Err(r.encode().ok())
     };
@@ -244,11 +273,16 @@ pub fn build_reply(query: &Message, answer: &Answer) -> Message {
             reply.header.rcode = rcode::NOERROR;
             // The answer may be at an expanded name; say so with a CNAME so
             // a client that checks names sees a well-formed chain.
-            if let (Some(q), Some(resolved)) = (&question, &answer.resolved_name) {
-                if &q.name != resolved && !answer.records.is_empty() {
-                    let ttl = answer.records.iter().map(|r| r.ttl).min().unwrap_or(0);
-                    reply.answers.push(Record::new(q.name.clone(), ttl, RData::Cname(resolved.clone())));
-                }
+            if let (Some(q), Some(resolved)) = (&question, &answer.resolved_name)
+                && &q.name != resolved
+                && !answer.records.is_empty()
+            {
+                let ttl = answer.records.iter().map(|r| r.ttl).min().unwrap_or(0);
+                reply.answers.push(Record::new(
+                    q.name.clone(),
+                    ttl,
+                    RData::Cname(resolved.clone()),
+                ));
             }
             reply.answers.extend(answer.records.iter().cloned());
         }
@@ -256,7 +290,9 @@ pub fn build_reply(query: &Message, answer: &Answer) -> Message {
         Outcome::Unavailable => reply.header.rcode = rcode::SERVFAIL,
     }
     if query.opt().is_some() {
-        reply.additional.push(Record::opt(dns::EDNS_UDP_SIZE, false));
+        reply
+            .additional
+            .push(Record::opt(dns::EDNS_UDP_SIZE, false));
     }
     reply
 }
@@ -283,7 +319,11 @@ mod tests {
         let q = Message::query(9, Question::new(Name::parse("printer").unwrap(), rtype::A));
         let answer = Answer {
             outcome: Outcome::Found,
-            records: vec![Record::new(Name::parse("printer.lan").unwrap(), 30, RData::A(Ipv4Addr::new(10, 0, 2, 9)))],
+            records: vec![Record::new(
+                Name::parse("printer.lan").unwrap(),
+                30,
+                RData::A(Ipv4Addr::new(10, 0, 2, 9)),
+            )],
             resolved_name: Some(Name::parse("printer.lan").unwrap()),
             ..Default::default()
         };
@@ -291,7 +331,10 @@ mod tests {
         assert_eq!(r.header.id, 9);
         assert!(r.header.response && r.header.recursion_available);
         assert_eq!(r.answers.len(), 2);
-        assert_eq!(r.answers[0].rdata, RData::Cname(Name::parse("printer.lan").unwrap()));
+        assert_eq!(
+            r.answers[0].rdata,
+            RData::Cname(Name::parse("printer.lan").unwrap())
+        );
         assert!(r.opt().is_some());
         let bytes = r.encode().unwrap();
         Message::decode(&bytes).unwrap();
@@ -299,10 +342,25 @@ mod tests {
 
     #[test]
     fn outcomes_map_to_rcodes() {
-        let q = Message::query(1, Question::new(Name::parse("x.example").unwrap(), rtype::A));
-        let nf = build_reply(&q, &Answer { outcome: Outcome::NotFound, ..Default::default() });
+        let q = Message::query(
+            1,
+            Question::new(Name::parse("x.example").unwrap(), rtype::A),
+        );
+        let nf = build_reply(
+            &q,
+            &Answer {
+                outcome: Outcome::NotFound,
+                ..Default::default()
+            },
+        );
         assert_eq!(nf.header.rcode, rcode::NXDOMAIN);
-        let un = build_reply(&q, &Answer { outcome: Outcome::Unavailable, ..Default::default() });
+        let un = build_reply(
+            &q,
+            &Answer {
+                outcome: Outcome::Unavailable,
+                ..Default::default()
+            },
+        );
         assert_eq!(un.header.rcode, rcode::SERVFAIL);
     }
 
@@ -320,6 +378,9 @@ mod tests {
         let mut bad = bytes.clone();
         bad.truncate(20);
         let reply = parse_query(&bad).err().flatten().unwrap();
-        assert_eq!(Message::decode(&reply).unwrap().header.rcode, rcode::FORMERR);
+        assert_eq!(
+            Message::decode(&reply).unwrap().header.rcode,
+            rcode::FORMERR
+        );
     }
 }
