@@ -107,6 +107,7 @@ dependencies = [
 [[package]]
 name = "libnetd"
 version = "0.1.1"
+source = "git+https://github.com/peios/netd.git?rev=301fdabdeb5ef67fcaa308b9522f9b24aeef4cf4#301fdabdeb5ef67fcaa308b9522f9b24aeef4cf4"
 dependencies = [
  "peios",
 ]

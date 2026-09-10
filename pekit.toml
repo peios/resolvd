@@ -14,7 +14,13 @@ set -eu
 SRC=$(pwd -P)
 export SRC
 export CARGO_HOME=/tmp/cargo-resolvd-vendor
+export CARGO_NET_GIT_FETCH_WITH_CLI=true
 mkdir -p "$CARGO_HOME" "$PEKIT_OUT"
+
+# Populate the fresh build environment from the immutable lock before switching
+# the rest of the build offline. This includes public Git dependencies such as
+# libnetd; no sibling checkout is mounted into the package build.
+cargo fetch --locked
 
 # Cargo does not vendor path dependencies. Refuse sibling state that would be
 # absent from the corresponding-source package and mutable across rebuilds.
@@ -54,6 +60,8 @@ cargo     = "*"
 rustc     = "*"
 python3   = "*"
 findutils = "*"
+git = "*"
+ca-certificates = "*"
 
 [build.main]
 needs = ["vendor"]

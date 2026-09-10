@@ -19,10 +19,10 @@ fuzz_target!(|data: &[u8]| {
             let _ = m.encode_udp(512);
         }
     }
-    if let Ok(s) = std::str::from_utf8(data) {
-        if let Ok(n) = dns::Name::parse(s) {
-            let _ = n.to_string();
-            let _ = n.to_lowercase();
-        }
+    if let Ok(s) = std::str::from_utf8(data)
+        && let Ok(n) = dns::Name::parse(s)
+    {
+        let _ = n.to_string();
+        let _ = n.to_lowercase();
     }
 });

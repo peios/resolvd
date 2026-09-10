@@ -11,7 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 dns = { path = "../dns" }
 libresolv = { path = "../libresolv" }
-libnetd = { path = "../../netd/libnetd" }
+libnetd = { git = "https://github.com/peios/netd.git", rev = "301fdabdeb5ef67fcaa308b9522f9b24aeef4cf4" }
 resolvd = { path = "../resolvd" }
 
 [[bin]]
