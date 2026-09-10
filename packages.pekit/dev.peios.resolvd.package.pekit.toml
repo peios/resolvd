@@ -6,11 +6,7 @@
 name        = "dev.peios.resolvd"
 description = "Peios machine-wide name-resolution service"
 
-[provides]
-resolvd = "{{version}}-7"
 
-[replaces]
-resolvd = "<= 0.1.0-6"
 
 [files]
 "@source:LICENSE"                         = "usr/share/licenses/dev.peios.resolvd/LICENSE"

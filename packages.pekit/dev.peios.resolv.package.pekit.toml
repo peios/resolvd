@@ -5,11 +5,7 @@
 name        = "dev.peios.resolv"
 description = "Peios name-resolution operator client"
 
-[provides]
-resolv = "{{version}}-7"
 
-[replaces]
-resolv = "<= 0.1.0-6"
 
 [files]
 "@source:LICENSE" = "usr/share/licenses/dev.peios.resolv/LICENSE"
