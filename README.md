@@ -29,8 +29,9 @@ loaded into every process independent from the daemon.
 ## Development
 
 The workspace requires Rust 1.98.1 or later and the Peios SDK development
-files. For an in-tree development build, `.env-dev` points Cargo at sibling
-`libpeios` and PKM header outputs:
+files. Netd's public control-protocol crate and the Peios Rust bindings are
+pinned to immutable Git revisions. For an in-tree development build,
+`.env-dev` points Cargo only at the local Peios SDK library and header outputs:
 
 ```sh
 . ./.env-dev

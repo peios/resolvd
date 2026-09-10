@@ -133,7 +133,7 @@ fuzz_target!(|script: Script| {
     let mut answered: HashMap<u64, u32> = HashMap::new();
     let mut qid = 0u64;
 
-    let mut apply = |actions: Vec<Action>, open: &mut HashMap<u64, Vec<u8>>, answered: &mut HashMap<u64, u32>| {
+    let apply = |actions: Vec<Action>, open: &mut HashMap<u64, Vec<u8>>, answered: &mut HashMap<u64, u32>| {
         for a in actions {
             match a {
                 Action::Send { tx, payload, .. } => {
