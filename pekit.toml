@@ -109,7 +109,6 @@ if versions != [expected]:
 
 export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$PEKIT_WORKSPACE_ROOT=$DEBUG_PREFIX/.workspace --remap-path-prefix=$PEKIT_OUT_BASE=$DEBUG_PREFIX/.build --remap-path-prefix=$SRC=$DEBUG_PREFIX --remap-path-prefix=$PEKIT_VENDOR_OUT/vendor=$DEBUG_PREFIX/vendor"
 TARGET=$PEKIT_OUT/target
-cargo test --release --workspace --locked --offline --target-dir "$TARGET"
 CARGO_PROFILE_RELEASE_DEBUG=2 CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
   cargo build --release --locked --offline \
     --bin resolvd --bin resolv --target-dir "$TARGET"
@@ -185,6 +184,46 @@ done
 rm -f "$PEKIT_OUT/.debug-sources"
 test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
 
+'''
+
+[build.main.dependencies.peipkg]
+"dev.peios.build-essentials-rust" = ">= 1.0.0-9"
+"org.pkgconf.pkgconf"             = "*"
+"org.llvm.clang-devel"            = ">= 22, < 23"
+"org.python.python3"              = "*"
+"dev.peios.libpeios-devel"        = "= 0.5.0-1"
+
+[build.main.dependencies.apt]
+dash         = "*"
+coreutils    = "*"
+findutils    = "*"
+grep         = "*"
+sed          = "*"
+cargo        = "*"
+rustc        = "*"
+gcc          = "*"
+binutils     = "*"
+debugedit    = "*"
+python3      = "*"
+libclang-dev = "*"
+pkgconf      = "*"
+
+[test]
+gate = true
+needs = ["main"]
+command = '''
+set -eu
+export CARGO_HOME=$PEKIT_OUT/cargo-home
+mkdir -p "$CARGO_HOME"
+cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
+unset PEIOS_LIB_DIR PEIOS_INCLUDE PKM_UAPI
+test "$(pkg-config --modversion peios)" = 0.5.0
+export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BINDGEN_EXTRA_CLANG_ARGS:-}"
+cargo test --release --workspace --locked --offline --target-dir "$PEKIT_OUT/target"
+
+# Validate the exact staged package output produced by build.main.
+SRC=$(pwd -P)
+PEKIT_OUT="$PEKIT_MAIN_OUT"
 test "$("$PEKIT_OUT/usr/bin/resolv" version)" = "resolv $PEKIT_VERSION"
 python3 - "$PEKIT_OUT" <<'PY'
 import json, pathlib, sys
@@ -264,14 +303,14 @@ readelf -dW "$PEKIT_OUT/usr/sbin/resolvd" | grep -Fq 'Shared library: [libpeios.
 ! readelf -dW "$NSS" | grep -Fq 'libpeios.so'
 '''
 
-[build.main.dependencies.peipkg]
+[test.dependencies.peipkg]
 "dev.peios.build-essentials-rust" = ">= 1.0.0-9"
 "org.pkgconf.pkgconf"             = "*"
 "org.llvm.clang-devel"            = ">= 22, < 23"
 "org.python.python3"              = "*"
 "dev.peios.libpeios-devel"        = "= 0.5.0-1"
 
-[build.main.dependencies.apt]
+[test.dependencies.apt]
 dash         = "*"
 coreutils    = "*"
 findutils    = "*"
@@ -283,34 +322,6 @@ gcc          = "*"
 binutils     = "*"
 debugedit    = "*"
 python3      = "*"
-libclang-dev = "*"
-pkgconf      = "*"
-
-[test]
-needs = ["vendor"]
-command = '''
-set -eu
-export CARGO_HOME=$PEKIT_OUT/cargo-home
-mkdir -p "$CARGO_HOME"
-cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
-unset PEIOS_LIB_DIR PEIOS_INCLUDE PKM_UAPI
-test "$(pkg-config --modversion peios)" = 0.5.0
-export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BINDGEN_EXTRA_CLANG_ARGS:-}"
-cargo test --workspace --locked --offline
-'''
-
-[test.dependencies.peipkg]
-"dev.peios.build-essentials-rust" = ">= 1.0.0-9"
-"org.pkgconf.pkgconf"             = "*"
-"org.llvm.clang-devel"            = ">= 22, < 23"
-"dev.peios.libpeios-devel"        = "= 0.5.0-1"
-
-[test.dependencies.apt]
-dash         = "*"
-coreutils    = "*"
-cargo        = "*"
-rustc        = "*"
-gcc          = "*"
 libclang-dev = "*"
 pkgconf      = "*"
 
