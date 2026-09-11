@@ -52,7 +52,7 @@ test -n "$(find "$PEKIT_OUT/vendor" -mindepth 1 -maxdepth 1 -type d -print -quit
 '''
 
 [build.vendor.dependencies.peipkg]
-"dev.peios.build-essentials-rust" = ">= 1.0.0-9"
+"dev.peios.build-essentials-rust" = ">= 1.0.0-1"
 "org.python.python3"              = "*"
 
 [build.vendor.dependencies.apt]
@@ -187,7 +187,7 @@ test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
 '''
 
 [build.main.dependencies.peipkg]
-"dev.peios.build-essentials-rust" = ">= 1.0.0-9"
+"dev.peios.build-essentials-rust" = ">= 1.0.0-1"
 "org.pkgconf.pkgconf"             = "*"
 "org.llvm.clang-devel"            = ">= 22, < 23"
 "org.python.python3"              = "*"
@@ -304,7 +304,7 @@ readelf -dW "$PEKIT_OUT/usr/sbin/resolvd" | grep -Fq 'Shared library: [libpeios.
 '''
 
 [test.dependencies.peipkg]
-"dev.peios.build-essentials-rust" = ">= 1.0.0-9"
+"dev.peios.build-essentials-rust" = ">= 1.0.0-1"
 "org.pkgconf.pkgconf"             = "*"
 "org.llvm.clang-devel"            = ">= 22, < 23"
 "org.python.python3"              = "*"

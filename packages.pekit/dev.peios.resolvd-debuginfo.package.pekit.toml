@@ -3,7 +3,7 @@ name        = "dev.peios.resolvd-debuginfo"
 description = "Debugging symbols for the Peios name-resolution service"
 
 [dependencies]
-"dev.peios.resolvd" = "= {{version}}-7"
+"dev.peios.resolvd" = "= {{version}}-1"
 
 [files]
 "@source:LICENSE"                  = "usr/share/licenses/dev.peios.resolvd-debuginfo/LICENSE"
