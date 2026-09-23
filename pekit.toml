@@ -54,6 +54,8 @@ test -n "$(find "$PEKIT_OUT/vendor" -mindepth 1 -maxdepth 1 -type d -print -quit
 [build.vendor.dependencies.peipkg]
 "dev.peios.build-essentials-rust" = ">= 1.0.0-1"
 "org.python.python3"              = "*"
+# Cargo fetches the pinned Git dependencies through the git CLI.
+"com.git-scm.git"                 = ">= 2.55.0"
 
 [build.vendor.dependencies.apt]
 cargo     = "*"
