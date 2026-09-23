@@ -9,6 +9,7 @@ description = "Peios machine-wide name-resolution service"
 
 
 [files]
+":usr/share/man/man8/resolvd.8.gz" = "usr/share/man/man8/resolvd.8.gz"
 "@source:LICENSE"                         = "usr/share/licenses/dev.peios.resolvd/LICENSE"
 ":usr/sbin/resolvd"                       = "usr/sbin/resolvd"
 ":usr/etc/resolv.conf"                    = "usr/etc/resolv.conf"

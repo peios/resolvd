@@ -78,12 +78,6 @@ export CARGO_HOME=$PEKIT_OUT/cargo-home
 mkdir -p "$CARGO_HOME"
 cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
 
-# Peiosutils remains the system command suite. GNU compatibility is confined
-# to the build process for conventional install/chmod semantics.
-if test -d /usr/libexec/coreutils-build; then
-  export PATH=/usr/libexec/coreutils-build:$PATH
-fi
-
 for tool in cargo rustc gcc pkg-config python3 objcopy strip readelf debugedit; do
   command -v "$tool" >/dev/null || {
     echo "resolvd: missing required build tool: $tool" >&2
@@ -92,10 +86,7 @@ for tool in cargo rustc gcc pkg-config python3 objcopy strip readelf debugedit; 
 done
 
 unset PEIOS_LIB_DIR PEIOS_INCLUDE PKM_UAPI
-test "$(pkg-config --modversion peios)" = 0.5.0 || {
-  echo "resolvd: dev.peios.libpeios-devel 0.5.0 is required" >&2
-  exit 1
-}
+. packaging/check-libpeios.sh
 export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BINDGEN_EXTRA_CLANG_ARGS:-}"
 
 cargo metadata --locked --offline --no-deps --format-version 1 |
@@ -114,9 +105,12 @@ export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }--remap-path-prefix=$PEKIT_WORKSPACE_
 # instrumentation (org.rust-lang.rust); stable rustc applies it to other
 # crates only under -Zcf-protection, so every crate here gets ENDBR landing
 # pads and the IBT/SHSTK property survives the link. The bootstrap escape
-# hatch is the one the Rust recipe itself uses for the same flag.
-export RUSTC_BOOTSTRAP=1
-RUSTFLAGS="$RUSTFLAGS -Zcf-protection=full"
+# hatch is the one the Rust recipe itself uses for the same flag. The Debian
+# seed build keeps its own compiler flags.
+if [ "${PEKIT_NATIVE_ROOT:-0}" = 1 ]; then
+  export RUSTC_BOOTSTRAP=1
+  RUSTFLAGS="$RUSTFLAGS -Zcf-protection=full"
+fi
 TARGET=$PEKIT_OUT/target
 CARGO_PROFILE_RELEASE_DEBUG=2 CARGO_PROFILE_RELEASE_SPLIT_DEBUGINFO=off \
   cargo build --release --locked --offline \
@@ -139,6 +133,18 @@ install -m 0644 "$SRC/registry.d/resolvd-port.reg" \
   "$PEKIT_OUT/usr/share/regim/resolvd-port.reg"
 install -m 0644 "$SRC/resolvd.regman" \
   "$PEKIT_OUT/usr/share/regman/resolvd.regman"
+
+python3 - "$SRC" "$PEKIT_OUT" <<'PY_MAN'
+import gzip, os, pathlib, sys
+source, output = map(pathlib.Path, sys.argv[1:])
+for name, section in (("resolvd", "8"), ("resolv", "1")):
+    target = output / "usr/share/man" / ("man" + section) / (name + "." + section + ".gz")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    with target.open("wb") as raw:
+        with gzip.GzipFile(filename="", mode="wb", fileobj=raw, mtime=0) as stream:
+            stream.write((source / "man" / (name + "." + section)).read_bytes())
+    os.chmod(target, 0o644)
+PY_MAN
 
 : > "$PEKIT_OUT/.debug-sources"
 split_debug() {
@@ -198,15 +204,15 @@ test -n "$(find "$DEBUG_ROOT" -type f -print -quit)"
 [build.main.dependencies.peipkg]
 "dev.peios.build-essentials-rust" = ">= 1.0.0-1"
 "org.pkgconf.pkgconf"             = "*"
-"org.llvm.clang-devel"            = ">= 22, < 23"
+"org.llvm.clang-devel"            = ">= 22.1.8"
 "org.python.python3"              = "*"
-"dev.peios.libpeios-devel"        = "= 0.5.0-1"
+"dev.peios.libpeios-devel"        = ">= 0.5.0"
 
 [build.main.dependencies.apt]
 # The libpeios SDK and PKM UAPI headers come from the signed catalogue
 # (pkgs/_debroot_); Debian has no Peios ABI packages.
-"dev.peios.libpeios"       = "= 0.5.0-1"
-"dev.peios.libpeios-devel" = "= 0.5.0-1"
+"dev.peios.libpeios"       = ">= 0.5.0"
+"dev.peios.libpeios-devel" = ">= 0.5.0"
 "dev.peios.kernel-headers" = "*"
 dash         = "*"
 coreutils    = "*"
@@ -231,13 +237,27 @@ export CARGO_HOME=$PEKIT_OUT/cargo-home
 mkdir -p "$CARGO_HOME"
 cp "$PEKIT_VENDOR_OUT/cargo-config.toml" "$CARGO_HOME/config.toml"
 unset PEIOS_LIB_DIR PEIOS_INCLUDE PKM_UAPI
-test "$(pkg-config --modversion peios)" = 0.5.0
+. packaging/check-libpeios.sh
+# The tests build the same CET-instrumented code as build.main (PEI-1155).
+if [ "${PEKIT_NATIVE_ROOT:-0}" = 1 ]; then
+  export RUSTC_BOOTSTRAP=1
+  export RUSTFLAGS="${RUSTFLAGS:+$RUSTFLAGS }-Zcf-protection=full"
+fi
 export BINDGEN_EXTRA_CLANG_ARGS="-isystem $(gcc -print-file-name=include) ${BINDGEN_EXTRA_CLANG_ARGS:-}"
 cargo test --release --workspace --locked --offline --target-dir "$PEKIT_OUT/target"
 
 # Validate the exact staged package output produced by build.main.
 SRC=$(pwd -P)
 PEKIT_OUT="$PEKIT_MAIN_OUT"
+python3 - "$SRC" "$PEKIT_OUT" <<'PY_MAN'
+import gzip, pathlib, sys
+source, output = map(pathlib.Path, sys.argv[1:])
+for name, section in (("resolvd", "8"), ("resolv", "1")):
+    raw = (output / "usr/share/man" / ("man" + section) / (name + "." + section + ".gz")).read_bytes()
+    data = (source / "man" / (name + "." + section)).read_bytes()
+    assert raw[4:8] == bytes(4)
+    assert gzip.decompress(raw) == data
+PY_MAN
 test "$("$PEKIT_OUT/usr/bin/resolv" version)" = "resolv $PEKIT_VERSION"
 python3 - "$PEKIT_OUT" <<'PY'
 import json, pathlib, sys
@@ -294,8 +314,8 @@ do
   readelf -lW "$elf" | grep -q 'GNU_RELRO'
   readelf -lW "$elf" | grep -Eq 'GNU_STACK[[:space:]].*RW[[:space:]]'
   readelf -dW "$elf" | grep -q 'BIND_NOW'
-  ! readelf -dW "$elf" | grep -Eq '(RPATH|RUNPATH|TEXTREL)'
-  ! readelf -SW "$elf" | grep -q '\.debug_info'
+  if readelf -dW "$elf" | grep -Eq '(RPATH|RUNPATH|TEXTREL)'; then echo "$elf has an RPATH, RUNPATH or TEXTREL" >&2; exit 1; fi
+  if readelf -SW "$elf" | grep -q '\.debug_info'; then echo "$elf still carries .debug_info" >&2; exit 1; fi
   if test "$kind" = exe; then
     readelf -dW "$elf" | grep -Eq 'FLAGS_1.*PIE'
   else
@@ -308,25 +328,25 @@ do
   readelf -SW "$debug" | grep -q '\.debug_info'
   test "$(readelf -n "$debug" | sed -n 's/^[[:space:]]*Build ID: //p' | head -1)" = "$build_id"
   for forbidden in "$SRC" "$PEKIT_VENDOR_OUT" "$PEKIT_OUT_BASE" "$PEKIT_WORKSPACE_ROOT"; do
-    ! grep -aF "$forbidden" "$elf" "$debug" >/dev/null
+    if grep -aF "$forbidden" "$elf" "$debug" >/dev/null; then echo "$elf or its debug file embeds $forbidden" >&2; exit 1; fi
   done
 done
 
 readelf -dW "$PEKIT_OUT/usr/sbin/resolvd" | grep -Fq 'Shared library: [libpeios.so.0]'
-! readelf -dW "$PEKIT_OUT/usr/bin/resolv" | grep -Fq 'libpeios.so'
-! readelf -dW "$NSS" | grep -Fq 'libpeios.so'
+if readelf -dW "$PEKIT_OUT/usr/bin/resolv" | grep -Fq 'libpeios.so'; then echo "resolv links libpeios" >&2; exit 1; fi
+if readelf -dW "$NSS" | grep -Fq 'libpeios.so'; then echo "the NSS module links libpeios" >&2; exit 1; fi
 '''
 
 [test.dependencies.peipkg]
 "dev.peios.build-essentials-rust" = ">= 1.0.0-1"
 "org.pkgconf.pkgconf"             = "*"
-"org.llvm.clang-devel"            = ">= 22, < 23"
+"org.llvm.clang-devel"            = ">= 22.1.8"
 "org.python.python3"              = "*"
-"dev.peios.libpeios-devel"        = "= 0.5.0-1"
+"dev.peios.libpeios-devel"        = ">= 0.5.0"
 
 [test.dependencies.apt]
-"dev.peios.libpeios"       = "= 0.5.0-1"
-"dev.peios.libpeios-devel" = "= 0.5.0-1"
+"dev.peios.libpeios"       = ">= 0.5.0"
+"dev.peios.libpeios-devel" = ">= 0.5.0"
 "dev.peios.kernel-headers" = "*"
 dash         = "*"
 coreutils    = "*"
