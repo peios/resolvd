@@ -1,10 +1,13 @@
 [package]
 name        = "dev.peios.resolvd-nss-debuginfo"
 description = "Debugging symbols for the Peios NSS host-resolution module"
+# The same crate closure as the module; checked by build.main.
+license     = "(Apache-2.0 OR MIT) AND MIT"
 
 [dependencies]
 "dev.peios.resolvd-nss" = "= {{release}}"
 
 [files]
 "@source:LICENSE"             = "usr/share/licenses/dev.peios.resolvd-nss-debuginfo/LICENSE"
+":licenses/nss/**"            = "usr/share/licenses/dev.peios.resolvd-nss-debuginfo/third-party"
 ":debug/nss/usr/lib/debug/**" = "usr/lib/debug"

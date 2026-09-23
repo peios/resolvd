@@ -1,10 +1,13 @@
 [package]
 name        = "dev.peios.resolv-debuginfo"
 description = "Debugging symbols for the Peios name-resolution client"
+# The same crate closure as resolv; checked by build.main.
+license     = "MIT"
 
 [dependencies]
 "dev.peios.resolv" = "= {{release}}"
 
 [files]
 "@source:LICENSE"                = "usr/share/licenses/dev.peios.resolv-debuginfo/LICENSE"
+":licenses/resolv/**"            = "usr/share/licenses/dev.peios.resolv-debuginfo/third-party"
 ":debug/resolv/usr/lib/debug/**" = "usr/lib/debug"
