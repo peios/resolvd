@@ -1,0 +1,68 @@
+.TH RESOLV 1 "" "Peios" "User Commands"
+.SH NAME
+resolv \- query and control the Peios name resolver
+.SH SYNOPSIS
+.B resolv status
+.br
+.B resolv query
+.I name
+.RI [ type ]
+.RB [ --no-cache ]
+.br
+.B resolv lookup
+.I name
+.br
+.B resolv reverse
+.I address
+.br
+.B resolv flush
+.br
+.B resolv version
+.SH DESCRIPTION
+.B resolv
+sends requests to the machine-wide resolver at /run/resolvd/resolv.sock.
+It owns no resolver state and does not read or modify DNS configuration files.
+The daemon authorizes each request using the caller's token.
+.SH COMMANDS
+.TP
+.B status
+Show the hostname, netd connection, interface scopes, servers, search domains,
+cache size, and resolver counters.
+.TP
+.BI "query " "name [type] [--no-cache]"
+Ask one DNS question. The default record type is A.
+The output identifies the result, its source and validation status, followed
+by answer records with their names, time-to-live values, types, and text.
+Use --no-cache to request that this query bypass the cache.
+.TP
+.BI "lookup " name
+Resolve a host name to addresses of either address family.
+Print the result source, canonical name, and addresses with their lifetimes.
+.TP
+.BI "reverse " address
+Look up the names associated with an IPv4 or IPv6 address.
+.TP
+.B flush
+Drop cached answers. Requires RESOLVER_CONTROL permission; ordinary queries
+and status require RESOLVER_QUERY permission.
+.TP
+.BR version ", " --version
+Print the client version without contacting the daemon.
+.SH EXIT STATUS
+Zero indicates success or a found answer. One indicates an invalid record
+type or address, connection or protocol failure, or a daemon error.
+Two indicates a name was not found; three indicates resolution was unavailable.
+Invalid command syntax returns 64 and prints usage to standard error.
+.SH EXAMPLES
+.nf
+resolv status
+resolv query example.org AAAA
+resolv query example.org --no-cache
+resolv reverse 192.0.2.1
+.fi
+.SH FILES
+.TP
+.I /run/resolvd/resolv.sock
+Native resolver endpoint.
+.SH SEE ALSO
+.BR resolvd (8)

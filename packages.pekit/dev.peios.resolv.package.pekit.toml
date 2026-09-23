@@ -8,5 +8,6 @@ description = "Peios name-resolution operator client"
 
 
 [files]
+":usr/share/man/man1/resolv.1.gz" = "usr/share/man/man1/resolv.1.gz"
 "@source:LICENSE" = "usr/share/licenses/dev.peios.resolv/LICENSE"
 ":usr/bin/resolv"  = "usr/bin/resolv"

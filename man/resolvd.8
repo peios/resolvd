@@ -1,0 +1,62 @@
+.TH RESOLVD 8 "" "Peios" "System Administration"
+.SH NAME
+resolvd \- Peios machine-wide name-resolution service
+.SH SYNOPSIS
+.B resolvd
+.SH DESCRIPTION
+.B resolvd
+maintains one DNS policy and cache for native Peios clients, the DNS stub
+on 127.0.0.53 port 53, and the libnss_peios_net.so.2 hosts NSS module.
+The daemon runs under the Peios service manager. It has no command-line
+configuration interface; use the registry and the resolv operator client.
+.PP
+Live interface servers, search domains, addresses, metrics and routing roles
+come from netd. Machine-wide fallback servers and static host names come
+from the registry. The daemon does not rewrite /etc/resolv.conf.
+The packaged resolver configuration is a constant pointer to the loopback stub.
+.SH CONFIGURATION
+The daemon reads the registry key
+.B Machine\eSystem\eNetwork\eDns
+at startup and when it changes.
+.TP
+.B FallbackServers
+Servers used only when no interface contributes servers.
+.TP
+.B ExtraSearchDomains
+Additional search domains applied after interface search domains.
+A single-label name without an applicable domain is not sent bare upstream.
+.TP
+.B ControlSecurity
+Security descriptor for the native control socket. RESOLVER_QUERY authorizes
+queries and status; RESOLVER_CONTROL authorizes cache flushing.
+The compiled default grants query rights to Everyone and all rights to
+SYSTEM and Administrators. It applies when this value is absent or malformed.
+.TP
+.B Hosts
+Subkey mapping static host names to one address or several addresses.
+Exact case-insensitive matches take precedence over DNS. These names also
+apply to reverse queries and to native, NSS, and stub clients.
+.PP
+See /usr/share/regman/resolvd.regman for value types and full policy details.
+.SH SECURITY
+The native socket checks each request against the peer's token.
+The loopback DNS stub is an anonymous interface: DNS carries no caller
+identity, and ControlSecurity does not govern this listener.
+.SH FILES
+.TP
+.I /run/resolvd/resolv.sock
+Native request and reply socket.
+.TP
+.I /usr/etc/resolv.conf
+Packaged constant configuration selecting 127.0.0.53.
+.TP
+.I /usr/share/regim/resolvd-service.reg
+Service definition and runtime-directory seed.
+.TP
+.I /usr/share/regim/resolvd-port.reg
+DNS port reservation seed.
+.TP
+.I /usr/share/regman/resolvd.regman
+Registry reference. Peios uses the registry Hosts subkey instead of /etc/hosts.
+.SH SEE ALSO
+.BR resolv (1)
