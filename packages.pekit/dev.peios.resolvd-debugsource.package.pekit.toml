@@ -2,7 +2,10 @@
 name         = "dev.peios.resolvd-debugsource"
 architecture = "noarch"
 description  = "Debug sources for resolvd, resolv, and the Peios NSS resolver"
+# The union of the three binaries' crate closures; checked by build.main.
+license      = "((MIT OR Apache-2.0) AND Unicode-3.0) AND Apache-2.0 AND (Apache-2.0 OR MIT) AND BSD-3-Clause AND ISC AND MIT AND (MIT OR Unlicense)"
 
 [files]
 "@source:LICENSE"   = "usr/share/licenses/dev.peios.resolvd-debugsource/LICENSE"
+":licenses/debugsource/**" = "usr/share/licenses/dev.peios.resolvd-debugsource/third-party"
 ":usr/src/debug/**" = "usr/src/debug"

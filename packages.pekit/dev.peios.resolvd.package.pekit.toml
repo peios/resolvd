@@ -5,12 +5,16 @@
 [package]
 name        = "dev.peios.resolvd"
 description = "Peios machine-wide name-resolution service"
+# The crate closure resolvd links; build.main's collect-rust-licences --check
+# holds this to what those crates declare.
+license     = "((MIT OR Apache-2.0) AND Unicode-3.0) AND Apache-2.0 AND (Apache-2.0 OR MIT) AND BSD-3-Clause AND ISC AND MIT AND (MIT OR Unlicense)"
 
 
 
 [files]
 ":usr/share/man/man8/resolvd.8.gz" = "usr/share/man/man8/resolvd.8.gz"
 "@source:LICENSE"                         = "usr/share/licenses/dev.peios.resolvd/LICENSE"
+":licenses/resolvd/**"                    = "usr/share/licenses/dev.peios.resolvd/third-party"
 ":usr/sbin/resolvd"                       = "usr/sbin/resolvd"
 ":usr/etc/resolv.conf"                    = "usr/etc/resolv.conf"
 ":usr/share/regim/resolvd-service.reg"    = "usr/share/regim/resolvd-service.reg"
