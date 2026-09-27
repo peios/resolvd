@@ -313,7 +313,7 @@ service_values = {
     for value in key["values"]
 }
 assert service_values["ImagePath"] == "/usr/sbin/resolvd"
-assert service_values["Identity"] == "LocalService"
+assert service_values["Identity"] == "Service"
 assert service_values["Readiness"] == 0
 assert service_values["RuntimeDirectories"] == ["resolvd"]
 assert service_values["RestartPolicy"] == 2
