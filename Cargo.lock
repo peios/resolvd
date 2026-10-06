@@ -106,8 +106,8 @@ dependencies = [
 
 [[package]]
 name = "libnetd"
-version = "0.1.5"
-source = "git+https://github.com/peios/netd.git?rev=12543fbdf14475f30679665246714e1c7e3fa37f#12543fbdf14475f30679665246714e1c7e3fa37f"
+version = "0.1.7"
+source = "git+https://github.com/peios/netd.git?rev=e18bd847325c10f99f01a341f31ef6fe89ee1d14#e18bd847325c10f99f01a341f31ef6fe89ee1d14"
 dependencies = [
  "peios",
 ]
@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "peios"
 version = "0.4.0"
-source = "git+https://github.com/peios/peios-rs.git?rev=2a2a6bb022192f6e98d4e4a6a7efdbdd40d53b35#2a2a6bb022192f6e98d4e4a6a7efdbdd40d53b35"
+source = "git+https://github.com/peios/peios-rs.git?rev=02c87cb643c30eef6b74cd1d9d8b0ae067bed69a#02c87cb643c30eef6b74cd1d9d8b0ae067bed69a"
 dependencies = [
  "bitflags",
  "libc",
@@ -165,7 +165,7 @@ dependencies = [
 [[package]]
 name = "peios-sys"
 version = "0.3.0"
-source = "git+https://github.com/peios/peios-rs.git?rev=2a2a6bb022192f6e98d4e4a6a7efdbdd40d53b35#2a2a6bb022192f6e98d4e4a6a7efdbdd40d53b35"
+source = "git+https://github.com/peios/peios-rs.git?rev=02c87cb643c30eef6b74cd1d9d8b0ae067bed69a#02c87cb643c30eef6b74cd1d9d8b0ae067bed69a"
 dependencies = [
  "bindgen",
  "pkg-config",
