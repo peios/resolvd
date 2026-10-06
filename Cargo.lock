@@ -65,7 +65,7 @@ dependencies = [
 
 [[package]]
 name = "dns"
-version = "0.1.5"
+version = "0.1.6"
 
 [[package]]
 name = "either"
@@ -106,15 +106,15 @@ dependencies = [
 
 [[package]]
 name = "libnetd"
-version = "0.1.7"
-source = "git+https://github.com/peios/netd.git?rev=e18bd847325c10f99f01a341f31ef6fe89ee1d14#e18bd847325c10f99f01a341f31ef6fe89ee1d14"
+version = "0.1.8"
+source = "git+https://github.com/peios/netd.git?rev=23af1f6b84f3764d9327eb009ced56b2a16b7aa8#23af1f6b84f3764d9327eb009ced56b2a16b7aa8"
 dependencies = [
  "peios",
 ]
 
 [[package]]
 name = "libresolv"
-version = "0.1.5"
+version = "0.1.6"
 
 [[package]]
 name = "log"
@@ -146,7 +146,7 @@ dependencies = [
 
 [[package]]
 name = "nss_peios_net"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "libc",
  "libresolv",
@@ -155,7 +155,7 @@ dependencies = [
 [[package]]
 name = "peios"
 version = "0.4.0"
-source = "git+https://github.com/peios/peios-rs.git?rev=02c87cb643c30eef6b74cd1d9d8b0ae067bed69a#02c87cb643c30eef6b74cd1d9d8b0ae067bed69a"
+source = "git+https://github.com/peios/peios-rs.git?rev=f8c84930f2b71763bcf0550df0b1420a0f63b21e#f8c84930f2b71763bcf0550df0b1420a0f63b21e"
 dependencies = [
  "bitflags",
  "libc",
@@ -165,7 +165,7 @@ dependencies = [
 [[package]]
 name = "peios-sys"
 version = "0.3.0"
-source = "git+https://github.com/peios/peios-rs.git?rev=02c87cb643c30eef6b74cd1d9d8b0ae067bed69a#02c87cb643c30eef6b74cd1d9d8b0ae067bed69a"
+source = "git+https://github.com/peios/peios-rs.git?rev=f8c84930f2b71763bcf0550df0b1420a0f63b21e#f8c84930f2b71763bcf0550df0b1420a0f63b21e"
 dependencies = [
  "bindgen",
  "pkg-config",
@@ -236,7 +236,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "resolv"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "dns",
  "libresolv",
@@ -244,7 +244,7 @@ dependencies = [
 
 [[package]]
 name = "resolvd"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "dns",
  "libc",

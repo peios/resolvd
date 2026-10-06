@@ -20,6 +20,6 @@ libresolv = { path = "../libresolv" }
 # The netd subscribe protocol: DNS scopes arrive on netd's control socket.
 # Pin the public release commit so this source tree never depends on a mutable
 # sibling checkout.
-libnetd = { git = "https://github.com/peios/netd.git", rev = "e18bd847325c10f99f01a341f31ef6fe89ee1d14" }
+libnetd = { git = "https://github.com/peios/netd.git", rev = "23af1f6b84f3764d9327eb009ced56b2a16b7aa8" }
 libc = { workspace = true }
 peios = { workspace = true }
