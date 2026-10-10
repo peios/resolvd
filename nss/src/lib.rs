@@ -52,6 +52,7 @@ pub enum NssStatus {
 }
 
 // <netdb.h>
+const NETDB_INTERNAL: c_int = -1;
 const HOST_NOT_FOUND: c_int = 1;
 const TRY_AGAIN: c_int = 2;
 const NO_RECOVERY: c_int = 3;
@@ -228,7 +229,17 @@ unsafe fn status_of<T>(
 }
 
 unsafe fn out_of_room(errnop: *mut c_int, h_errnop: *mut c_int) -> NssStatus {
-    unsafe { fail(NssStatus::TryAgain, errnop, h_errnop, libc::ERANGE, 0) }
+    // glibc only treats TRYAGAIN/ERANGE as buffer exhaustion when h_errno
+    // is NETDB_INTERNAL; otherwise it will not retry with more space.
+    unsafe {
+        fail(
+            NssStatus::TryAgain,
+            errnop,
+            h_errnop,
+            libc::ERANGE,
+            NETDB_INTERNAL,
+        )
+    }
 }
 
 fn family_of(af: c_int) -> Option<Family> {
@@ -693,3 +704,6 @@ mod tests {
         assert!(a.addresses[0].address.is_ipv4());
     }
 }
+
+#[cfg(test)]
+mod buffer_retry_tests;
