@@ -526,7 +526,7 @@ impl Engine {
                 let more = !task.candidates.is_empty();
                 if ttl > 0 {
                     self.cache
-                        .insert(CacheKey::new(&candidate, rtype, &scope), entry);
+                        .insert(CacheKey::new(&candidate, rtype, &scope), entry, now);
                 }
                 if outcome == Outcome::NotFound && more {
                     return self.next_candidate(task_id, now);
@@ -1261,6 +1261,62 @@ mod tests {
         e.set_scopes(vec![scope("lan", &["10.0.2.4"], &["lan"], true)]);
         let actions = e.resolve(3, "www.example.com", rtype::A, false, now);
         sent(&actions);
+    }
+
+    #[test]
+    fn a_long_lived_answer_at_capacity_preserves_other_live_answers() {
+        let mut e = engine();
+        let now = Instant::now() + Duration::from_secs(3_600);
+        for i in 0..crate::cache::MAX_ENTRIES {
+            let name = format!("n{i}.example.com");
+            let (tx, _, q) = sent(&e.resolve(i as u64, &name, rtype::A, false, now));
+            let ttl = if i == 0 { 60 } else { 300 };
+            let record = Record::new(n(&name), ttl, RData::A("1.2.3.4".parse().unwrap()));
+            done(&e.received(tx, &reply(&q, vec![record], rcode::NOERROR), now));
+        }
+        assert_eq!(e.cache_entries(), crate::cache::MAX_ENTRIES);
+        let (tx, _, q) = sent(&e.resolve(u64::MAX, "long.example.com", rtype::A, false, now));
+        let record = Record::new(
+            n("long.example.com"),
+            86_400,
+            RData::A("1.2.3.5".parse().unwrap()),
+        );
+        done(&e.received(tx, &reply(&q, vec![record], rcode::NOERROR), now));
+
+        assert_eq!(e.cache_entries(), crate::cache::MAX_ENTRIES);
+        let sent_before = e.counters.upstream_sent;
+        for name in ["n1.example.com", "long.example.com"] {
+            let answer = done(&e.resolve(u64::MAX, name, rtype::A, false, now));
+            assert_eq!(answer.source, Source::Cache);
+        }
+        assert_eq!(e.counters.upstream_sent, sent_before);
+        sent(&e.resolve(u64::MAX, "n0.example.com", rtype::A, false, now));
+        assert_eq!(e.counters.upstream_sent, sent_before + 1);
+    }
+
+    #[test]
+    fn an_expired_answer_is_removed_from_the_cache_count_on_lookup() {
+        let mut e = engine();
+        let now = Instant::now();
+        let (tx, _, q) = sent(&e.resolve(1, "expire.example.com", rtype::A, false, now));
+        let record = Record::new(
+            n("expire.example.com"),
+            10,
+            RData::A("1.2.3.4".parse().unwrap()),
+        );
+        done(&e.received(tx, &reply(&q, vec![record], rcode::NOERROR), now));
+        assert_eq!(e.cache_entries(), 1);
+
+        sent(&e.resolve(
+            2,
+            "expire.example.com",
+            rtype::A,
+            false,
+            now + Duration::from_secs(10),
+        ));
+        assert_eq!(e.cache_entries(), 0);
+        assert_eq!(e.counters.cache_hits, 0);
+        assert_eq!(e.counters.upstream_sent, 2);
     }
 
     #[test]
