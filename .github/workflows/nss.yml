@@ -1,0 +1,28 @@
+name: NSS and protocol checks
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  nss:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Install Rust
+        run: rustup toolchain install 1.99.0 --profile minimal --component rustfmt,clippy
+      # These crates do not need the Peios SDK. The full daemon workspace
+      # and guest integration suite still need their normal Peios environment.
+      - name: Check NSS formatting
+        run: cargo +1.99.0 fmt -p nss_peios_net -- --check
+      - name: Lint NSS
+        run: cargo +1.99.0 clippy -p nss_peios_net --all-targets --locked -- -D warnings
+      - name: Test NSS and protocols
+        run: cargo +1.99.0 test -p nss_peios_net -p libresolv -p dns --release --locked
+      - name: Build NSS shared library
+        run: cargo +1.99.0 build -p nss_peios_net --release --locked
