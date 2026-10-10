@@ -2,10 +2,10 @@
 //!
 //! Every NSS entry point is handed a `char *buf` and a length, and the
 //! structure it fills points *into* that buffer. Nothing here allocates.
-//! Running out of room is `NSS_STATUS_TRYAGAIN` with `ERANGE`, and glibc
-//! calls again with a larger buffer — so a packer that overflowed silently
-//! would corrupt the caller rather than trigger the retry that exists for
-//! it. Same design as authd/nss/src/buffer.rs.
+//! Running out of room is `NSS_STATUS_TRYAGAIN` with `errno = ERANGE` and
+//! `h_errno = NETDB_INTERNAL`, so glibc can retry with a larger buffer.
+//! A packer that overflowed silently would corrupt the caller rather than
+//! trigger the retry that exists for it. Same design as authd/nss/src/buffer.rs.
 
 use core::ffi::c_char;
 
