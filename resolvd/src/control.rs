@@ -238,9 +238,13 @@ impl Client {
     /// Read what is available and see whether a request is complete.
     pub fn read(&mut self) -> Progress {
         let mut chunk = [0u8; 4096];
+        let mut eof = false;
         loop {
             match self.stream.read(&mut chunk) {
-                Ok(0) => return Progress::Closed,
+                Ok(0) => {
+                    eof = true;
+                    break;
+                }
                 Ok(n) => {
                     self.buf.extend_from_slice(&chunk[..n]);
                     if self.buf.len() > 4 + MAX_MESSAGE_BYTES {
@@ -254,7 +258,11 @@ impl Client {
             }
         }
         if self.buf.len() < 4 {
-            return Progress::Incomplete;
+            return if eof {
+                Progress::Closed
+            } else {
+                Progress::Incomplete
+            };
         }
         let len = u32::from_le_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]) as usize;
         if len > MAX_MESSAGE_BYTES {
@@ -262,7 +270,11 @@ impl Client {
             return Progress::Closed;
         }
         if self.buf.len() < 4 + len {
-            return Progress::Incomplete;
+            return if eof {
+                Progress::Closed
+            } else {
+                Progress::Incomplete
+            };
         }
         match Request::decode(&self.buf[4..4 + len]) {
             Ok(r) => Progress::Request(r),
@@ -285,5 +297,40 @@ pub fn respond(stream: &mut UnixStream, reply: &Reply) {
     frame.extend_from_slice(&bytes);
     if let Err(e) = stream.write_all(&frame) {
         log::warn(format_args!("control: reply failed: {e}"));
+    }
+}
+
+#[cfg(test)]
+mod framing_tests {
+    use super::*;
+    use std::net::Shutdown;
+
+    #[test]
+    fn half_closed_complete_request_can_still_receive_a_reply() {
+        let (server, mut peer) = UnixStream::pair().unwrap();
+        let payload = Request::Status.encode();
+        let mut frame = (payload.len() as u32).to_le_bytes().to_vec();
+        frame.extend_from_slice(&payload);
+        peer.write_all(&frame).unwrap();
+        peer.shutdown(Shutdown::Write).unwrap();
+        let mut client = Client::new(server, Instant::now()).unwrap();
+        assert!(matches!(client.read(), Progress::Request(Request::Status)));
+        let reply = Reply::Error("test response".into());
+        respond(&mut client.stream, &reply);
+        drop(client);
+        let mut bytes = Vec::new();
+        peer.read_to_end(&mut bytes).unwrap();
+        assert_eq!(&bytes[4..], &reply.encode());
+    }
+
+    #[test]
+    fn half_closed_incomplete_requests_are_closed_immediately() {
+        for bytes in [vec![], vec![2, 0], vec![2, 0, 0, 0, 0x81]] {
+            let (server, mut peer) = UnixStream::pair().unwrap();
+            peer.write_all(&bytes).unwrap();
+            peer.shutdown(Shutdown::Write).unwrap();
+            let mut client = Client::new(server, Instant::now()).unwrap();
+            assert!(matches!(client.read(), Progress::Closed));
+        }
     }
 }
