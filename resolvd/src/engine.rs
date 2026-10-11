@@ -206,6 +206,9 @@ struct Task {
     original: Name,
     rtype: u16,
     no_cache: bool,
+    /// Once invalidated, this task cannot populate the cache, including on
+    /// retries or later search candidates. Its requester still completes.
+    cache_invalidated: bool,
     candidates: VecDeque<Name>,
     /// The candidate in flight.
     current: Option<Name>,
@@ -274,18 +277,31 @@ impl Engine {
     /// Replace the scopes. A scope whose servers changed loses its cache:
     /// a VPN's answers die with the VPN.
     pub fn set_scopes(&mut self, scopes: Vec<Scope>) {
+        let mut invalidated = Vec::new();
         for new in &scopes {
             let old = self.scopes.iter().find(|s| s.id == new.id);
             if old.is_none_or(|o| o.servers != new.servers) {
-                self.cache.flush_scope(&new.id);
+                invalidated.push(new.id.clone());
             }
         }
         for old in &self.scopes {
             if !scopes.iter().any(|s| s.id == old.id) {
-                self.cache.flush_scope(&old.id);
+                invalidated.push(old.id.clone());
             }
         }
+        for id in invalidated {
+            self.invalidate_scope_cache(&id);
+        }
         self.scopes = scopes;
+    }
+
+    fn invalidate_scope_cache(&mut self, scope: &str) {
+        self.cache.flush_scope(scope);
+        for task in self.tasks.values_mut() {
+            if task.scope.as_deref() == Some(scope) {
+                task.cache_invalidated = true;
+            }
+        }
     }
 
     pub fn scopes(&self) -> &[Scope] {
@@ -294,7 +310,7 @@ impl Engine {
 
     pub fn set_fallback(&mut self, servers: Vec<IpAddr>, domains: Vec<Name>) {
         if servers != self.fallback_servers {
-            self.cache.flush_scope(FALLBACK_SCOPE);
+            self.invalidate_scope_cache(FALLBACK_SCOPE);
         }
         self.fallback_servers = servers;
         self.fallback_domains = domains;
@@ -320,6 +336,9 @@ impl Engine {
 
     pub fn flush(&mut self) {
         self.cache.clear();
+        for task in self.tasks.values_mut() {
+            task.cache_invalidated = true;
+        }
     }
 
     pub fn cache_entries(&self) -> usize {
@@ -524,7 +543,7 @@ impl Engine {
                 };
                 let rtype = task.rtype;
                 let more = !task.candidates.is_empty();
-                if ttl > 0 {
+                if ttl > 0 && !task.cache_invalidated {
                     self.cache
                         .insert(CacheKey::new(&candidate, rtype, &scope), entry);
                 }
@@ -624,6 +643,7 @@ impl Engine {
                 original: name,
                 rtype,
                 no_cache,
+                cache_invalidated: false,
                 candidates: VecDeque::new(),
                 current: None,
                 scope: None,
@@ -1654,5 +1674,348 @@ mod tests {
         assert_eq!(a.records[0].rdata, RData::A(Ipv4Addr::LOCALHOST));
         let a = done(&e.resolve(2, "lonely", rtype::AAAA, false, Instant::now()));
         assert_eq!(a.records[0].rdata, RData::Aaaa(Ipv6Addr::LOCALHOST));
+    }
+    // PEI-1339: all replies below are encoded in memory; Send is inspected,
+    // never dispatched. Advance injected time instead of sleeping.
+    fn admission_reply(q: &Message, negative: bool) -> Vec<u8> {
+        let mut m = Message::reply_to(q);
+        if negative {
+            m.header.rcode = rcode::NXDOMAIN;
+            m.authority.push(Record::new(
+                n("example.com"),
+                60,
+                RData::Soa {
+                    mname: n("ns.example.com"),
+                    rname: n("hostmaster.example.com"),
+                    serial: 1,
+                    refresh: 1,
+                    retry: 1,
+                    expire: 1,
+                    minimum: 60,
+                },
+            ));
+        } else {
+            m.answers.push(Record::new(
+                q.questions[0].name.clone(),
+                60,
+                RData::A("1.2.3.4".parse().unwrap()),
+            ));
+        }
+        m.encode().unwrap()
+    }
+
+    fn late_admission_after_invalidation(kind: u8, negative: bool) {
+        let mut e = engine();
+        if kind == 2 {
+            e.set_scopes(vec![]);
+            e.set_fallback(vec!["10.0.2.3".parse().unwrap()], vec![]);
+        }
+        let now = Instant::now();
+        let (tx, old_server, q) = sent(&e.resolve(1, "late.example.com", rtype::A, false, now));
+        match kind {
+            0 => e.flush(),
+            1 => e.set_scopes(vec![scope("lan", &["10.0.2.4"], &["lan"], true)]),
+            2 => e.set_fallback(vec!["10.0.2.4".parse().unwrap()], vec![]),
+            3 => {
+                e.set_scopes(vec![]);
+                e.set_scopes(vec![scope("lan", &["10.0.2.3"], &["lan"], true)]);
+            }
+            _ => unreachable!(),
+        }
+        assert_eq!(e.in_flight(), 1, "invalidation does not cancel the asker");
+        let at = now + Duration::from_millis(100);
+        let a = done(&e.received(tx, &admission_reply(&q, negative), at));
+        assert_eq!(a.source, Source::Dns);
+        assert_eq!(a.server, Some(old_server));
+        assert_eq!(
+            a.outcome,
+            if negative {
+                Outcome::NotFound
+            } else {
+                Outcome::Found
+            }
+        );
+        assert_eq!(e.in_flight(), 0);
+        assert_eq!(
+            e.cache_entries(),
+            0,
+            "late reply must not restore flushed state"
+        );
+        let at = now + Duration::from_millis(200);
+        let (fresh, server, q) = sent(&e.resolve(2, "late.example.com", rtype::A, false, at));
+        let expected = if kind == 1 || kind == 2 {
+            "10.0.2.4"
+        } else {
+            "10.0.2.3"
+        };
+        assert_eq!(server, expected.parse::<IpAddr>().unwrap());
+        done(&e.received(fresh, &admission_reply(&q, negative), at));
+        assert_eq!(e.cache_entries(), 1, "a new request can cache normally");
+        let a = done(&e.resolve(3, "late.example.com", rtype::A, false, at));
+        assert_eq!(a.source, Source::Cache);
+        assert_eq!(a.server, Some(server));
+        assert_eq!(
+            a.outcome,
+            if negative {
+                Outcome::NotFound
+            } else {
+                Outcome::Found
+            }
+        );
+    }
+
+    #[test]
+    fn flush_prevents_late_positive_admission() {
+        late_admission_after_invalidation(0, false);
+    }
+    #[test]
+    fn flush_prevents_late_negative_admission() {
+        late_admission_after_invalidation(0, true);
+    }
+    #[test]
+    fn changed_scope_prevents_late_positive_admission() {
+        late_admission_after_invalidation(1, false);
+    }
+    #[test]
+    fn changed_scope_prevents_late_negative_admission() {
+        late_admission_after_invalidation(1, true);
+    }
+    #[test]
+    fn changed_fallback_prevents_late_positive_admission() {
+        late_admission_after_invalidation(2, false);
+    }
+    #[test]
+    fn changed_fallback_prevents_late_negative_admission() {
+        late_admission_after_invalidation(2, true);
+    }
+    #[test]
+    fn removed_and_readded_scope_does_not_restore_late_admission() {
+        late_admission_after_invalidation(3, false);
+    }
+
+    #[test]
+    fn unchanged_scope_configuration_preserves_pending_admission() {
+        let mut e = engine();
+        let now = Instant::now();
+        let (tx, _, q) = sent(&e.resolve(1, "same.example.com", rtype::A, false, now));
+        let mut s = e.scopes()[0].clone();
+        s.metric += 1;
+        s.domains = vec![n("other.example")];
+        e.set_scopes(vec![s]);
+        done(&e.received(tx, &admission_reply(&q, false), now));
+        assert_eq!(
+            done(&e.resolve(2, "same.example.com", rtype::A, false, now)).source,
+            Source::Cache
+        );
+    }
+
+    #[test]
+    fn unchanged_fallback_servers_preserve_pending_admission() {
+        let mut e = Engine::new(42);
+        let now = Instant::now();
+        e.set_fallback(vec!["10.0.2.3".parse().unwrap()], vec![]);
+        let (tx, _, q) = sent(&e.resolve(1, "same.example.com", rtype::A, false, now));
+        e.set_fallback(vec!["10.0.2.3".parse().unwrap()], vec![n("new.example")]);
+        done(&e.received(tx, &admission_reply(&q, false), now));
+        assert_eq!(
+            done(&e.resolve(2, "same.example.com", rtype::A, false, now)).source,
+            Source::Cache
+        );
+    }
+
+    #[test]
+    fn changing_one_scope_preserves_other_pending_admission() {
+        let mut e = engine();
+        let now = Instant::now();
+        let lan = e.scopes()[0].clone();
+        e.set_scopes(vec![
+            lan.clone(),
+            scope("vpn", &["10.8.0.1"], &["corp.example"], false),
+        ]);
+        let (tx, _, q) = sent(&e.resolve(1, "same.example.com", rtype::A, false, now));
+        e.set_scopes(vec![
+            lan,
+            scope("vpn", &["10.9.0.1"], &["corp.example"], false),
+        ]);
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![]);
+        done(&e.received(tx, &admission_reply(&q, false), now));
+        assert_eq!(
+            done(&e.resolve(2, "same.example.com", rtype::A, false, now)).source,
+            Source::Cache
+        );
+    }
+
+    #[test]
+    fn late_invalidated_reply_does_not_overwrite_new_request_answer() {
+        let mut e = engine();
+        let now = Instant::now();
+        let (old_tx, _, old_q) = sent(&e.resolve(1, "race.example.com", rtype::A, false, now));
+        e.flush();
+        let at = now + Duration::from_millis(100);
+        let (new_tx, _, new_q) = sent(&e.resolve(2, "race.example.com", rtype::A, false, at));
+        let newer = vec![Record::new(
+            n("race.example.com"),
+            60,
+            RData::A("5.6.7.8".parse().unwrap()),
+        )];
+        done(&e.received(new_tx, &reply(&new_q, newer.clone(), 0), at));
+        done(&e.received(old_tx, &admission_reply(&old_q, false), at));
+        let a = done(&e.resolve(3, "race.example.com", rtype::A, false, at));
+        assert_eq!(a.source, Source::Cache);
+        assert_eq!(
+            a.records, newer,
+            "the old task must not overwrite the fresh cache entry"
+        );
+    }
+
+    #[test]
+    fn invalidated_udp_task_stays_uncacheable_through_tcp_retry() {
+        let mut e = engine();
+        let now = Instant::now();
+        let (tx, _, q) = sent(&e.resolve(1, "tcp.example.com", rtype::A, false, now));
+        e.flush();
+        let mut m = Message::reply_to(&q);
+        m.header.truncated = true;
+        let at = now + Duration::from_millis(100);
+        let actions = e.received(tx, &m.encode().unwrap(), at);
+        assert!(matches!(
+            actions.as_slice(),
+            [Action::Send { tcp: true, .. }]
+        ));
+        let (tx, _, q) = sent(&actions);
+        assert_eq!(
+            done(&e.received(tx, &admission_reply(&q, false), at)).source,
+            Source::Dns
+        );
+        assert_eq!(e.cache_entries(), 0);
+        sent(&e.resolve(2, "tcp.example.com", rtype::A, false, at));
+    }
+
+    #[test]
+    fn invalidated_task_stays_uncacheable_through_timeout_retry() {
+        let mut e = engine();
+        let now = Instant::now();
+        let (old_tx, _, _) = sent(&e.resolve(1, "retry.example.com", rtype::A, false, now));
+        e.set_scopes(vec![scope("lan", &["10.0.2.4"], &["lan"], true)]);
+        let at = now + SERVER_TIMEOUT;
+        let actions = e.tick(at);
+        assert!(actions.contains(&Action::Cancel { tx: old_tx }));
+        let (tx, server, q) = sent(&actions);
+        assert_eq!(server, "10.0.2.4".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            done(&e.received(tx, &admission_reply(&q, false), at)).source,
+            Source::Dns
+        );
+        assert_eq!(
+            e.cache_entries(),
+            0,
+            "even a new attempt retains old task invalidation"
+        );
+    }
+
+    #[test]
+    fn invalidated_task_stays_uncacheable_through_search_candidates() {
+        let mut e = engine();
+        e.set_scopes(vec![scope(
+            "lan",
+            &["10.0.2.3"],
+            &["a.example", "b.example"],
+            true,
+        )]);
+        let now = Instant::now();
+        let (tx, _, q) = sent(&e.resolve(1, "printer", rtype::A, false, now));
+        e.flush();
+        let at = now + Duration::from_millis(100);
+        let (tx2, _, q2) = sent(&e.received(tx, &reply(&q, vec![], rcode::NXDOMAIN), at));
+        assert_eq!(q2.questions[0].name, n("printer.b.example"));
+        assert_eq!(
+            e.cache_entries(),
+            0,
+            "the first negative candidate has zero TTL"
+        );
+        assert_eq!(
+            done(&e.received(tx2, &admission_reply(&q2, false), at)).source,
+            Source::Dns
+        );
+        assert_eq!(
+            e.cache_entries(),
+            0,
+            "the next candidate must not reset admission"
+        );
+        sent(&e.resolve(2, "printer.b.example", rtype::A, false, at));
+    }
+
+    #[test]
+    fn flush_keeps_lookup_completion_and_cname_chasing_without_cache_admission() {
+        let mut e = engine();
+        let now = Instant::now();
+        let actions = e.lookup(1, "alias.example.com", Family::Any, now);
+        assert_eq!(actions.len(), 2);
+        e.flush();
+        let mut result = None;
+        for action in actions {
+            let (tx, _, q) = sent(&[action]);
+            let records = if q.questions[0].rtype == rtype::A {
+                vec![
+                    Record::new(
+                        n("alias.example.com"),
+                        60,
+                        RData::Cname(n("target.example.com")),
+                    ),
+                    Record::new(
+                        n("target.example.com"),
+                        60,
+                        RData::A("1.2.3.4".parse().unwrap()),
+                    ),
+                ]
+            } else {
+                vec![]
+            };
+            for action in e.received(tx, &reply(&q, records, 0), now + Duration::from_millis(100)) {
+                if let Action::Done {
+                    completion: Completion::Addresses(a),
+                    ..
+                } = action
+                {
+                    result = Some(a);
+                }
+            }
+        }
+        let a = result.expect("both families complete the existing lookup");
+        assert_eq!(a.outcome, Outcome::Found);
+        assert_eq!(a.canonical, n("target.example.com"));
+        assert_eq!(
+            a.addresses,
+            vec![("1.2.3.4".parse::<IpAddr>().unwrap(), 60)]
+        );
+        assert_eq!(e.cache_entries(), 0);
+        assert_eq!(e.in_flight(), 0);
+        assert!(e.tick(now + SERVER_TIMEOUT * 2).is_empty());
+    }
+    #[test]
+    fn global_flush_invalidates_all_pending_scopes_including_fallback() {
+        let mut e = Engine::new(42);
+        let now = Instant::now();
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![]);
+        let fallback = sent(&e.resolve(1, "fallback.example.com", rtype::A, false, now));
+        e.set_scopes(vec![
+            scope("lan", &["10.0.2.3"], &["lan"], true),
+            scope("vpn", &["10.8.0.1"], &["corp.example"], false),
+        ]);
+        let lan = sent(&e.resolve(2, "lan.example.com", rtype::A, false, now));
+        let vpn = sent(&e.resolve(3, "secret.corp.example", rtype::A, false, now));
+        assert_eq!(e.in_flight(), 3);
+        e.flush();
+        for (tx, server, q) in [fallback, lan, vpn] {
+            let a = done(&e.received(
+                tx,
+                &admission_reply(&q, false),
+                now + Duration::from_millis(100),
+            ));
+            assert_eq!(a.source, Source::Dns);
+            assert_eq!(a.server, Some(server));
+        }
+        assert_eq!(e.in_flight(), 0);
+        assert_eq!(e.cache_entries(), 0);
     }
 }
