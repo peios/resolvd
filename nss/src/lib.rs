@@ -24,7 +24,8 @@
 //!
 //! # Failing the right way
 //!
-//! `NotFound` is `NSS_STATUS_NOTFOUND` with `HOST_NOT_FOUND`. `Unavailable`
+//! `NotFound` is `NSS_STATUS_NOTFOUND` with `HOST_NOT_FOUND`; a found name
+//! without the requested data uses `NO_DATA` instead. `Unavailable`
 //! — resolvd exists but nothing could answer — is `NSS_STATUS_TRYAGAIN`
 //! with `TRY_AGAIN`, never an absence. resolvd itself absent is
 //! `NSS_STATUS_UNAVAIL`.
@@ -76,6 +77,7 @@ pub struct GaihAddrtuple {
 enum Got<T> {
     Value(T),
     NotFound,
+    NoData,
     TryAgain,
     Unavailable,
 }
@@ -98,11 +100,7 @@ fn lookup(name: &str, family: Family) -> Got<Addresses> {
             family,
         },
     ) {
-        Ok(Reply::Addresses(a)) => match a.outcome {
-            Outcome::Found => Got::Value(a),
-            Outcome::NotFound => Got::NotFound,
-            Outcome::Unavailable => Got::TryAgain,
-        },
+        Ok(Reply::Addresses(a)) => classify_addresses(a, family),
         Ok(_) => Got::Unavailable,
         // A timeout lands here: resolvd exists and did not answer in time.
         Err(libresolv::WireError::Io(e))
@@ -120,12 +118,7 @@ fn reverse(address: IpAddr) -> Got<Answer> {
         return Got::Unavailable;
     };
     match libresolv::call(&mut stream, &Request::Reverse { address }) {
-        Ok(Reply::Answer(a)) => match a.outcome {
-            Outcome::Found if a.records.is_empty() => Got::NotFound,
-            Outcome::Found => Got::Value(a),
-            Outcome::NotFound => Got::NotFound,
-            Outcome::Unavailable => Got::TryAgain,
-        },
+        Ok(Reply::Answer(a)) => classify_reverse(a),
         Ok(_) => Got::Unavailable,
         Err(libresolv::WireError::Io(e))
             if e.kind() == std::io::ErrorKind::WouldBlock
@@ -207,6 +200,9 @@ unsafe fn status_of<T>(
                 HOST_NOT_FOUND,
             )
         },
+        Got::NoData => unsafe {
+            fail(NssStatus::NotFound, errnop, h_errnop, libc::ENOENT, NO_DATA)
+        },
         Got::TryAgain => unsafe {
             fail(
                 NssStatus::TryAgain,
@@ -255,21 +251,35 @@ fn resolve_addresses(name: &str, family: Family) -> Got<Addresses> {
     if is_localhost(name) {
         return Got::Value(local_addresses(family));
     }
-    match lookup(name, family) {
-        Got::Value(mut a) => {
+    lookup(name, family)
+}
+
+// Keep daemon outcomes distinct before considering the requested data.
+fn classify_addresses(mut a: Addresses, family: Family) -> Got<Addresses> {
+    match a.outcome {
+        Outcome::NotFound => Got::NotFound,
+        Outcome::Unavailable => Got::TryAgain,
+        Outcome::Found => {
             a.addresses.retain(|x| match family {
                 Family::Any => true,
                 Family::V4 => x.address.is_ipv4(),
                 Family::V6 => x.address.is_ipv6(),
             });
             if a.addresses.is_empty() {
-                // The name exists with no address of this family: NO_DATA,
-                // which is NotFound with a different h_errno.
-                return Got::NotFound;
+                Got::NoData
+            } else {
+                Got::Value(a)
             }
-            Got::Value(a)
         }
-        other => other,
+    }
+}
+
+fn classify_reverse(a: Answer) -> Got<Answer> {
+    match a.outcome {
+        Outcome::NotFound => Got::NotFound,
+        Outcome::Unavailable => Got::TryAgain,
+        Outcome::Found if !a.records.iter().any(|r| r.rtype == 12) => Got::NoData,
+        Outcome::Found => Got::Value(a),
     }
 }
 
@@ -608,15 +618,7 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr2_r(
         .map(|r| r.text.trim_end_matches('.'))
         .collect();
     let Some(first) = names.first() else {
-        return unsafe {
-            fail(
-                NssStatus::NotFound,
-                errnop,
-                h_errnop,
-                libc::ENOENT,
-                HOST_NOT_FOUND,
-            )
-        };
+        return unsafe { fail(NssStatus::NotFound, errnop, h_errnop, libc::ENOENT, NO_DATA) };
     };
     let mut packer = unsafe { Packer::new(buffer, buflen) };
     let Some(name) = packer.str(first) else {
@@ -707,3 +709,6 @@ mod tests {
 
 #[cfg(test)]
 mod buffer_retry_tests;
+
+#[cfg(test)]
+mod response_tests;
