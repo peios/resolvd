@@ -562,16 +562,15 @@ impl Reply {
                     let c = &mut status.counters;
                     let mut seen = Vec::new();
                     for_each_field(r, &mut seen, |key, r| {
-                        let v = r.read_uint()?;
                         match key {
-                            "queries" => c.queries = v,
-                            "synthetic" => c.synthetic = v,
-                            "cache_hits" => c.cache_hits = v,
-                            "upstream_sent" => c.upstream_sent = v,
-                            "upstream_answered" => c.upstream_answered = v,
-                            "upstream_failed" => c.upstream_failed = v,
-                            "refused" => c.refused = v,
-                            _ => {}
+                            "queries" => c.queries = r.read_uint()?,
+                            "synthetic" => c.synthetic = r.read_uint()?,
+                            "cache_hits" => c.cache_hits = r.read_uint()?,
+                            "upstream_sent" => c.upstream_sent = r.read_uint()?,
+                            "upstream_answered" => c.upstream_answered = r.read_uint()?,
+                            "upstream_failed" => c.upstream_failed = r.read_uint()?,
+                            "refused" => c.refused = r.read_uint()?,
+                            _ => r.skip()?,
                         }
                         Ok(())
                     })?;

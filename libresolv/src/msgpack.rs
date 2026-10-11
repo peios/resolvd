@@ -1,5 +1,6 @@
 //! A MessagePack codec: the subset PSPU messages use — nil, bool, integers,
-//! strings, binary, arrays, maps.
+//! strings, binary, arrays, maps. Unknown values may also contain floats
+//! and extensions, which can be skipped without interpreting them.
 //!
 //! libresolv is linked into `libnss_peios_net.so.2`, which is loaded into
 //! every process on the system, so it takes no dependency on libpeios (whose
@@ -13,7 +14,7 @@ pub enum Error {
     Truncated,
     /// The next value is not of the type asked for.
     Type,
-    /// A float or extension, which no PSPU message here carries.
+    /// A reserved MessagePack marker.
     Unsupported,
     Utf8,
     /// A container nested deeper than a message may.
@@ -323,23 +324,47 @@ impl<'a> Reader<'a> {
         Ok(n)
     }
 
-    /// Skip one value of any supported type.
+    /// Skip one MessagePack value, retaining string and nesting validation.
     pub fn skip(&mut self) -> Result<()> {
-        match self.peek().ok_or(Error::Truncated)? {
-            Type::Nil => self.read_nil(),
-            Type::Bool => self.read_bool().map(drop),
-            Type::Int => self.read_int().map(drop),
-            Type::Str => self.read_str().map(drop),
-            Type::Bin => self.read_bin().map(drop),
-            Type::Array => {
+        match *self.buf.get(self.pos).ok_or(Error::Truncated)? {
+            0x00..=0x7f | 0xe0..=0xff | 0xc0 | 0xc2 | 0xc3 => self.byte().map(drop),
+            0xca..=0xd8 => {
+                let n = match self.byte()? {
+                    0xcc | 0xd0 => 1,
+                    0xcd | 0xd1 | 0xd4 => 2,
+                    0xd5 => 3,
+                    0xca | 0xce | 0xd2 => 4,
+                    0xd6 => 5,
+                    0xcb | 0xcf | 0xd3 => 8,
+                    0xd7 => 9,
+                    0xd8 => 17,
+                    _ => unreachable!(),
+                };
+                // Integers need no range conversion; fixed extensions include
+                // their type byte as well as their opaque data.
+                self.take(n).map(drop)
+            }
+            0xc7..=0xc9 => {
+                let width = match self.byte()? {
+                    0xc7 => 1,
+                    0xc8 => 2,
+                    _ => 4,
+                };
+                let n = self.be_u(width)? as usize;
+                self.byte()?; // Extension type, even when the data is empty.
+                self.take(n).map(drop)
+            }
+            0xa0..=0xbf | 0xd9..=0xdb => self.read_str().map(drop),
+            0xc4..=0xc6 => self.read_bin().map(drop),
+            0x90..=0x9f | 0xdc | 0xdd => {
                 let n = self.read_array()?;
                 self.nested(|r| (0..n).try_for_each(|_| r.skip()))
             }
-            Type::Map => {
+            0x80..=0x8f | 0xde | 0xdf => {
                 let n = self.read_map()?;
                 self.nested(|r| (0..n).try_for_each(|_| r.skip().and_then(|_| r.skip())))
             }
-            Type::Other => Err(Error::Unsupported),
+            _ => Err(Error::Unsupported),
         }
     }
 
@@ -425,9 +450,207 @@ mod tests {
         let mut deep = vec![0x91u8; 40];
         deep.push(0xc0);
         assert_eq!(Reader::new(&deep).skip(), Err(Error::Depth));
-        assert_eq!(
-            Reader::new(&[0xca, 0, 0, 0, 0]).skip(),
-            Err(Error::Unsupported)
-        );
+        assert_eq!(Reader::new(&[0xc1]).skip(), Err(Error::Unsupported));
+    }
+
+    // Raw wire values exercise forms the protocol's Writer does not emit.
+    fn skippable_scalars() -> Vec<Vec<u8>> {
+        let mut values = vec![
+            vec![0],
+            vec![0x7f],
+            vec![0xe0],
+            vec![0xff],
+            vec![0xc0],
+            vec![0xc2],
+            vec![0xc3],
+        ];
+        for (tag, len) in [
+            (0xcc, 1),
+            (0xcd, 2),
+            (0xce, 4),
+            (0xcf, 8),
+            (0xd0, 1),
+            (0xd1, 2),
+            (0xd2, 4),
+            (0xd3, 8),
+            (0xca, 4),
+            (0xcb, 8),
+            (0xd4, 2),
+            (0xd5, 3),
+            (0xd6, 5),
+            (0xd7, 9),
+            (0xd8, 17),
+        ] {
+            let mut value = vec![tag];
+            // Includes uint64::MAX, arbitrary float bits and a signed ext type.
+            value.extend(vec![0xff; len]);
+            values.push(value);
+        }
+        for (tag, width) in [(0xc7, 1), (0xc8, 2), (0xc9, 4)] {
+            for len in [0u32, 3] {
+                let mut value = vec![tag];
+                value.extend_from_slice(&len.to_be_bytes()[4 - width..]);
+                value.push(0xff); // Type byte exists even for empty ext data.
+                value.extend(vec![0xc1; len as usize]); // Opaque, not nested values.
+                values.push(value);
+            }
+        }
+        values
+    }
+
+    #[test]
+    fn skip_scalars_and_extensions_preserves_the_next_value() {
+        for value in skippable_scalars() {
+            let mut bytes = value.clone();
+            bytes.push(42);
+            let mut r = Reader::new(&bytes);
+            assert_eq!(r.skip(), Ok(()), "wire value {value:x?}");
+            assert_eq!(r.read_uint(), Ok(42), "wire value {value:x?}");
+            assert_eq!(r.remaining(), 0);
+            // Every incomplete prefix, including missing ext type/data, fails.
+            for end in 0..value.len() {
+                assert_eq!(
+                    Reader::new(&value[..end]).skip(),
+                    Err(Error::Truncated),
+                    "wire value {value:x?}, prefix {end}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn skip_float_values() {
+        // Independent of the uint64 regression on the old implementation.
+        for value in skippable_scalars()
+            .into_iter()
+            .filter(|v| matches!(v[0], 0xca | 0xcb))
+        {
+            assert_eq!(Reader::new(&value).skip(), Ok(()), "wire value {value:x?}");
+        }
+    }
+
+    #[test]
+    fn skip_extension_values() {
+        // Independent of the float regression on the old implementation.
+        for value in skippable_scalars()
+            .into_iter()
+            .filter(|v| matches!(v[0], 0xc7..=0xc9 | 0xd4..=0xd8))
+        {
+            assert_eq!(Reader::new(&value).skip(), Ok(()), "wire value {value:x?}");
+        }
+    }
+
+    #[test]
+    fn skip_extended_values_in_nested_map_keys_and_values() {
+        for value in skippable_scalars() {
+            let mut bytes = vec![0x91, 0x81]; // array containing a map
+            bytes.extend_from_slice(&value); // unknown map key
+            bytes.push(0x91);
+            bytes.extend_from_slice(&value); // array-valued map entry
+            bytes.push(42);
+            let mut r = Reader::new(&bytes);
+            assert_eq!(r.skip(), Ok(()), "wire value {value:x?}");
+            assert_eq!(r.read_uint(), Ok(42));
+            assert_eq!(r.remaining(), 0);
+        }
+    }
+
+    #[test]
+    fn skip_keeps_depth_utf8_and_reserved_marker_checks() {
+        let mut bytes = vec![0x91; MAX_DEPTH as usize];
+        bytes.extend_from_slice(&[0xca, 0, 0, 0, 0]);
+        assert_eq!(Reader::new(&bytes).skip(), Ok(()));
+        bytes.insert(0, 0x91);
+        assert_eq!(Reader::new(&bytes).skip(), Err(Error::Depth));
+        assert_eq!(Reader::new(&[0xa1, 0xff]).skip(), Err(Error::Utf8));
+        assert_eq!(Reader::new(&[0x91, 0xc1]).skip(), Err(Error::Unsupported));
+    }
+
+    #[test]
+    fn requests_and_replies_ignore_extended_unknown_fields() {
+        use crate::{Family, Reply, Request};
+        for value in skippable_scalars() {
+            let mut w = Writer::new();
+            w.write_map(3).write_str("future");
+            let mut request = w.into_bytes();
+            request.extend_from_slice(&value);
+            let mut w = Writer::new();
+            w.write_str("query")
+                .write_str("lookup")
+                .write_str("name")
+                .write_str("x");
+            request.extend_from_slice(&w.into_bytes());
+            assert_eq!(
+                Request::decode(&request).unwrap(),
+                Request::Lookup {
+                    name: "x".into(),
+                    family: Family::Any,
+                }
+            );
+
+            let mut w = Writer::new();
+            w.write_map(2).write_str("future").write_array(1);
+            let mut reply = w.into_bytes();
+            reply.extend_from_slice(&value);
+            let mut w = Writer::new();
+            w.write_str("ok").write_bool(true);
+            reply.extend_from_slice(&w.into_bytes());
+            assert_eq!(Reply::decode(&reply).unwrap(), Reply::Ok);
+        }
+    }
+
+    #[test]
+    fn replies_ignore_unknown_counter_values_but_validate_known_counters() {
+        use crate::{Reply, StatusReport, WireError};
+        for value in skippable_scalars() {
+            let mut w = Writer::new();
+            w.write_map(3)
+                .write_str("ok")
+                .write_bool(true)
+                .write_str("kind")
+                .write_str("status")
+                .write_str("counters")
+                .write_map(2)
+                .write_str("future");
+            let mut bytes = w.into_bytes();
+            bytes.extend_from_slice(&value);
+            let mut w = Writer::new();
+            w.write_str("queries").write_uint(42);
+            bytes.extend_from_slice(&w.into_bytes());
+            let mut status = StatusReport::default();
+            status.counters.queries = 42;
+            assert_eq!(Reply::decode(&bytes).unwrap(), Reply::Status(status));
+        }
+        for invalid in [
+            vec![0xca, 0, 0, 0, 0],
+            vec![0xd4, 0, 0],
+            vec![0xff],
+            vec![0xcf, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
+        ] {
+            let mut w = Writer::new();
+            w.write_map(2)
+                .write_str("ok")
+                .write_bool(true)
+                .write_str("counters")
+                .write_map(1)
+                .write_str("queries");
+            let mut bytes = w.into_bytes();
+            bytes.extend_from_slice(&invalid);
+            assert!(matches!(
+                Reply::decode(&bytes),
+                Err(WireError::Encoding(Error::Type))
+            ));
+            let mut w = Writer::new();
+            w.write_map(2)
+                .write_str("query")
+                .write_str("status")
+                .write_str("type");
+            let mut bytes = w.into_bytes();
+            bytes.extend_from_slice(&invalid);
+            assert!(matches!(
+                crate::Request::decode(&bytes),
+                Err(WireError::Encoding(Error::Type))
+            ));
+        }
     }
 }
