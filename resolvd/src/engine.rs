@@ -18,8 +18,14 @@
 //! 2. the scope with the longest search domain the name ends with;
 //! 3. a reverse name, to the scope whose subnet holds the address;
 //! 4. the default-route claimant with the lowest metric;
-//! 5. the fallback servers from the registry, only when no interface
+//! 5. the lowest-metric up scope with servers when none claims the default;
+//! 6. the fallback servers from the registry, only when no up interface
 //!    supplies any.
+//!
+//! Up means link or better, regardless of servers. An exclusive scope must
+//! also be addressed or better. If an earlier step chooses a scope without
+//! servers, an upstream attempt finishes Unavailable rather than querying
+//! another scope. Synthetic answers and the chosen scope's cache still apply.
 //!
 //! A single-label name is expanded with the applicable search domains and
 //! never sent bare; with no domain to apply it is `NotFound` without a
@@ -860,10 +866,9 @@ impl Engine {
 
     // ----------------------------------------------------------- routing
 
+    /// Link availability is independent of whether DNS servers have arrived.
     fn up_scopes(&self) -> impl Iterator<Item = &Scope> {
-        self.scopes
-            .iter()
-            .filter(|s| s.level >= Level::Link && !s.servers.is_empty())
+        self.scopes.iter().filter(|s| s.level >= Level::Link)
     }
 
     fn exclusive(&self) -> Option<&Scope> {
@@ -872,7 +877,7 @@ impl Engine {
             .min_by_key(|s| s.metric)
     }
 
-    /// The scope a name goes to, or `None` when nothing could answer.
+    /// The scope a name goes to, even if it has no servers, or `None` if none qualifies.
     fn route(&self, name: &Name, _now: Instant) -> Option<String> {
         if let Some(x) = self.exclusive() {
             return Some(x.id.clone());
@@ -907,7 +912,14 @@ impl Engine {
         {
             return Some(s.id.clone());
         }
-        if let Some(s) = self.up_scopes().min_by_key(|s| s.metric) {
+        // Only this last-resort interface step requires servers. An earlier
+        // winner without servers stays selected; if an upstream attempt is
+        // needed, it finishes Unavailable instead of using another scope.
+        if let Some(s) = self
+            .up_scopes()
+            .filter(|s| !s.servers.is_empty())
+            .min_by_key(|s| s.metric)
+        {
             return Some(s.id.clone());
         }
         if !self.fallback_servers.is_empty() {
@@ -1443,6 +1455,327 @@ mod tests {
         let mut e2 = Engine::new(1);
         let a = done(&e2.resolve(1, "example.com", rtype::A, false, now));
         assert_eq!(a.outcome, Outcome::Unavailable);
+    }
+
+    // Exercise public engine actions, including the absence of a delayed send.
+    fn assert_local_resolution(
+        e: &mut Engine,
+        name: &str,
+        rtype: u16,
+        outcome: Outcome,
+        now: Instant,
+    ) {
+        let actions = e.resolve(1, name, rtype, false, now);
+        assert_eq!(
+            actions,
+            vec![Action::Done {
+                qid: 1,
+                completion: Completion::Answer(Answer {
+                    outcome,
+                    ..Default::default()
+                }),
+            }],
+            "{name} must finish locally without any Send action"
+        );
+        assert_eq!(e.counters.upstream_sent, 0);
+        assert_eq!(e.next_deadline(), None);
+        assert!(e.tick(now + SERVER_TIMEOUT * 4).is_empty());
+        assert_eq!(e.counters.upstream_sent, 0);
+    }
+
+    #[test]
+    fn serverless_exclusive_scope_blocks_other_scopes_and_fallback() {
+        let mut vpn = scope("vpn", &[], &["corp.example"], false);
+        vpn.exclusive = true;
+        vpn.level = Level::Addressed;
+        vpn.metric = 50;
+        let mut other = scope("other", &["10.9.0.1"], &["eng.corp.example"], true);
+        other.exclusive = true;
+        other.metric = 200;
+        let now = Instant::now();
+        for (name, rtype) in [
+            ("www.example.com", rtype::A),
+            ("git.eng.corp.example", rtype::AAAA),
+            ("printer.lan", rtype::A),
+            ("7.2.0.10.in-addr.arpa", rtype::PTR),
+        ] {
+            let mut e = engine();
+            e.set_scopes(vec![e.scopes()[0].clone(), other.clone(), vpn.clone()]);
+            e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![n("extra.example")]);
+            assert_local_resolution(&mut e, name, rtype, Outcome::Unavailable, now);
+        }
+    }
+
+    #[test]
+    fn serverless_link_scope_wins_longest_matching_domain() {
+        let mut e = engine();
+        let mut shorter = scope("shorter", &["10.9.0.1"], &["example"], false);
+        shorter.metric = 1;
+        let mut vpn = scope("vpn", &[], &["corp.example"], false);
+        vpn.level = Level::Link;
+        vpn.metric = 200;
+        e.set_scopes(vec![e.scopes()[0].clone(), shorter, vpn]);
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![]);
+        assert_local_resolution(
+            &mut e,
+            "git.corp.example",
+            rtype::A,
+            Outcome::Unavailable,
+            Instant::now(),
+        );
+    }
+
+    #[test]
+    fn serverless_subnet_winner_does_not_use_another_scope() {
+        let mut e = engine();
+        let mut vpn = scope("vpn", &[], &[], false);
+        vpn.addresses = vec![("10.8.0.2".parse().unwrap(), 24)];
+        vpn.metric = 50;
+        let mut other = scope("other", &["10.9.0.1"], &[], false);
+        other.addresses = vpn.addresses.clone();
+        other.metric = 200;
+        e.set_scopes(vec![e.scopes()[0].clone(), other, vpn]);
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![]);
+        assert_local_resolution(
+            &mut e,
+            "7.0.8.10.in-addr.arpa",
+            rtype::PTR,
+            Outcome::Unavailable,
+            Instant::now(),
+        );
+    }
+
+    #[test]
+    fn serverless_default_claimant_blocks_lower_metric_nonclaimant() {
+        let mut e = Engine::new(1);
+        let claimant = scope("lan", &[], &[], true);
+        let mut other = scope("vpn", &["10.8.0.1"], &[], false);
+        other.metric = 50;
+        e.set_scopes(vec![other, claimant]);
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![]);
+        assert_local_resolution(
+            &mut e,
+            "www.example.com",
+            rtype::A,
+            Outcome::Unavailable,
+            Instant::now(),
+        );
+    }
+
+    #[test]
+    fn serverless_lower_metric_default_claimant_still_wins() {
+        let mut e = Engine::new(1);
+        let claimant = scope("lan", &[], &[], true);
+        let mut other = scope("vpn", &["10.8.0.1"], &[], true);
+        other.metric = 200;
+        e.set_scopes(vec![other, claimant]);
+        assert_local_resolution(
+            &mut e,
+            "www.example.com",
+            rtype::A,
+            Outcome::Unavailable,
+            Instant::now(),
+        );
+    }
+
+    #[test]
+    fn serverless_earlier_winner_blocks_fallback_even_without_other_interfaces() {
+        let now = Instant::now();
+        for (domains, default_route, exclusive, name, rtype) in [
+            (vec![], false, true, "www.example.com", rtype::A),
+            (
+                vec!["corp.example"],
+                false,
+                false,
+                "git.corp.example",
+                rtype::A,
+            ),
+            (vec![], false, false, "7.2.0.10.in-addr.arpa", rtype::PTR),
+            (vec![], true, false, "www.example.com", rtype::A),
+        ] {
+            let mut e = Engine::new(1);
+            let mut s = scope("serverless", &[], &domains, default_route);
+            s.exclusive = exclusive;
+            e.set_scopes(vec![s]);
+            e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![]);
+            assert_local_resolution(&mut e, name, rtype, Outcome::Unavailable, now);
+        }
+    }
+
+    #[test]
+    fn serverless_search_domain_ends_expansion_without_trying_later_domains() {
+        let mut e = engine();
+        let mut vpn = scope("vpn", &[], &["corp.example"], false);
+        vpn.level = Level::Link;
+        vpn.metric = 50;
+        e.set_scopes(vec![e.scopes()[0].clone(), vpn]);
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![n("extra.example")]);
+        assert_local_resolution(
+            &mut e,
+            "printer",
+            rtype::A,
+            Outcome::Unavailable,
+            Instant::now(),
+        );
+    }
+
+    #[test]
+    fn serverless_exclusive_search_ignores_other_and_extra_domains() {
+        let mut e = engine();
+        let mut vpn = scope("vpn", &[], &["corp.example"], false);
+        vpn.exclusive = true;
+        vpn.level = Level::Addressed;
+        vpn.metric = 200;
+        e.set_scopes(vec![e.scopes()[0].clone(), vpn]);
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![n("extra.example")]);
+        assert_local_resolution(
+            &mut e,
+            "printer",
+            rtype::A,
+            Outcome::Unavailable,
+            Instant::now(),
+        );
+    }
+
+    #[test]
+    fn serverless_exclusive_without_domains_keeps_single_label_notfound() {
+        let mut e = engine();
+        let mut vpn = scope("vpn", &[], &[], false);
+        vpn.exclusive = true;
+        vpn.level = Level::Addressed;
+        e.set_scopes(vec![e.scopes()[0].clone(), vpn]);
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![n("extra.example")]);
+        assert_local_resolution(
+            &mut e,
+            "printer",
+            rtype::A,
+            Outcome::NotFound,
+            Instant::now(),
+        );
+    }
+
+    #[test]
+    fn serverless_routing_ties_keep_snapshot_order() {
+        let now = Instant::now();
+        // Equal metrics for the exclusive, domain, subnet and default steps.
+        for (domains, default_route, exclusive, name, rtype) in [
+            (vec![], false, true, "www.example.com", rtype::A),
+            (
+                vec!["corp.example"],
+                false,
+                false,
+                "git.corp.example",
+                rtype::A,
+            ),
+            (vec![], false, false, "7.2.0.10.in-addr.arpa", rtype::PTR),
+            (vec![], true, false, "www.example.com", rtype::A),
+        ] {
+            let mut first = scope("first", &[], &domains, default_route);
+            first.exclusive = exclusive;
+            let mut second = scope("second", &["10.9.0.1"], &domains, default_route);
+            second.exclusive = exclusive;
+            let mut e = Engine::new(1);
+            e.set_scopes(vec![first.clone(), second.clone()]);
+            assert_local_resolution(&mut e, name, rtype, Outcome::Unavailable, now);
+            // Reversing only snapshot order gives the serverful peer the question.
+            let mut e = Engine::new(1);
+            e.set_scopes(vec![second, first]);
+            let actions = e.resolve(1, name, rtype, false, now);
+            assert_eq!(actions.len(), 1);
+            let (_, server, _) = sent(&actions);
+            assert_eq!(server, "10.9.0.1".parse::<IpAddr>().unwrap());
+        }
+    }
+
+    #[test]
+    fn serverless_nonclaimant_is_skipped_at_lowest_metric_step() {
+        let mut e = Engine::new(1);
+        let mut serverless = scope("serverless", &[], &[], false);
+        serverless.metric = 1;
+        let mut usable = scope("usable", &["10.8.0.1"], &[], false);
+        usable.metric = 200;
+        e.set_scopes(vec![serverless, usable]);
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![]);
+        let actions = e.resolve(1, "www.example.com", rtype::A, false, Instant::now());
+        assert_eq!(actions.len(), 1);
+        let (_, server, _) = sent(&actions);
+        assert_eq!(server, "10.8.0.1".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn serverless_nonclaimant_allows_fallback_when_no_earlier_step_matches() {
+        let mut e = Engine::new(1);
+        e.set_scopes(vec![scope("serverless", &[], &["corp.example"], false)]);
+        e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![n("extra.example")]);
+        let actions = e.resolve(1, "www.example.com", rtype::A, false, Instant::now());
+        assert_eq!(actions.len(), 1);
+        let (_, server, _) = sent(&actions);
+        assert_eq!(server, "9.9.9.9".parse::<IpAddr>().unwrap());
+    }
+
+    #[test]
+    fn below_link_scopes_do_not_route_or_expand_names() {
+        let now = Instant::now();
+        for servers in [vec![], vec!["10.8.0.1"]] {
+            let mut ignored = scope("ignored", &servers, &["corp.example"], true);
+            ignored.level = Level::Absent;
+            ignored.metric = 1;
+            ignored.exclusive = true;
+            for (name, rtype, expected) in [
+                ("www.example.com", rtype::A, "www.example.com"),
+                ("git.corp.example", rtype::A, "git.corp.example"),
+                ("7.2.0.10.in-addr.arpa", rtype::PTR, "7.2.0.10.in-addr.arpa"),
+                ("printer", rtype::A, "printer.lan"),
+            ] {
+                let mut e = engine();
+                e.set_scopes(vec![ignored.clone(), e.scopes()[0].clone()]);
+                let actions = e.resolve(1, name, rtype, false, now);
+                assert_eq!(actions.len(), 1);
+                let (_, server, q) = sent(&actions);
+                assert_eq!(server, "10.0.2.3".parse::<IpAddr>().unwrap());
+                assert_eq!(q.questions[0].name, n(expected));
+            }
+        }
+    }
+
+    #[test]
+    fn serverless_exclusive_at_link_is_only_an_ordinary_scope() {
+        let now = Instant::now();
+        let mut vpn = scope("vpn", &[], &["corp.example"], false);
+        vpn.level = Level::Link;
+        vpn.exclusive = true;
+        let mut e = engine();
+        e.set_scopes(vec![e.scopes()[0].clone(), vpn.clone()]);
+        let actions = e.resolve(1, "www.example.com", rtype::A, false, now);
+        assert_eq!(actions.len(), 1);
+        let (_, server, _) = sent(&actions);
+        assert_eq!(server, "10.0.2.3".parse::<IpAddr>().unwrap());
+        let mut e = engine();
+        e.set_scopes(vec![e.scopes()[0].clone(), vpn]);
+        assert_local_resolution(
+            &mut e,
+            "git.corp.example",
+            rtype::A,
+            Outcome::Unavailable,
+            now,
+        );
+    }
+
+    #[test]
+    fn synthetic_answers_still_precede_a_serverless_exclusive_scope() {
+        let now = Instant::now();
+        let mut e = engine();
+        let mut vpn = scope("vpn", &[], &["corp.example"], false);
+        vpn.exclusive = true;
+        e.set_scopes(vec![vpn]);
+        let actions = e.resolve(1, "localhost", rtype::A, false, now);
+        assert_eq!(actions.len(), 1);
+        let answer = done(&actions);
+        assert_eq!(answer.outcome, Outcome::Found);
+        assert_eq!(answer.source, Source::Synthetic);
+        assert_eq!(answer.records[0].rdata, RData::A(Ipv4Addr::LOCALHOST));
+        assert_eq!(e.counters.upstream_sent, 0);
+        assert_eq!(e.next_deadline(), None);
     }
 
     #[test]
