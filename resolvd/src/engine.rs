@@ -390,12 +390,25 @@ impl Engine {
                 }),
             }];
         };
-        let id = self.start_task(Owner::Resolve(qid), name, rtype, no_cache);
-        self.advance(id, now)
+        self.resolve_name(qid, name, rtype, no_cache, now)
     }
 
+    /// Resolve the already-decoded IN-class name without presentation parsing.
     pub fn resolve_question(&mut self, qid: Qid, question: &Question, now: Instant) -> Vec<Action> {
-        self.resolve(qid, &question.name.to_string(), question.rtype, false, now)
+        self.counters.queries += 1;
+        self.resolve_name(qid, question.name.clone(), question.rtype, false, now)
+    }
+
+    fn resolve_name(
+        &mut self,
+        qid: Qid,
+        name: Name,
+        rtype: u16,
+        no_cache: bool,
+        now: Instant,
+    ) -> Vec<Action> {
+        let id = self.start_task(Owner::Resolve(qid), name, rtype, no_cache);
+        self.advance(id, now)
     }
 
     pub fn lookup(&mut self, qid: Qid, name: &str, family: Family, now: Instant) -> Vec<Action> {
@@ -1269,6 +1282,49 @@ mod tests {
         m.header.rcode = code;
         m.answers = records;
         m.encode().unwrap()
+    }
+
+    #[test]
+    fn stub_names_preserve_wire_labels_and_count_once() {
+        let cases = [
+            vec![b"dot.label".to_vec(), b"example".to_vec()],
+            vec![b"back\\slash\0\x01\xff".to_vec(), b"example".to_vec()],
+            vec![vec![0xc3; 63], b"example".to_vec()],
+            vec![vec![1; 15]; 5],
+        ];
+        for labels in cases {
+            let mut e = engine();
+            let name = Name::from_labels(labels.clone()).unwrap();
+            let actions = e.resolve_question(1, &Question::new(name, rtype::A), Instant::now());
+            let (_, _, query) = sent(&actions);
+            let actual: Vec<_> = query
+                .question()
+                .unwrap()
+                .name
+                .labels()
+                .iter()
+                .map(|label| label.to_ascii_lowercase())
+                .collect();
+            assert_eq!(actual, labels);
+            assert_eq!(e.counters.queries, 1);
+        }
+    }
+
+    #[test]
+    fn stub_single_label_with_embedded_dot_uses_search_domain() {
+        let mut e = engine();
+        let name = Name::from_labels(vec![b"dot.label".to_vec()]).unwrap();
+        let actions = e.resolve_question(1, &Question::new(name, rtype::A), Instant::now());
+        let (_, _, query) = sent(&actions);
+        let labels: Vec<_> = query
+            .question()
+            .unwrap()
+            .name
+            .labels()
+            .iter()
+            .map(|label| label.to_ascii_lowercase())
+            .collect();
+        assert_eq!(labels, vec![b"dot.label".to_vec(), b"lan".to_vec()]);
     }
 
     #[test]
