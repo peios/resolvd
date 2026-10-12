@@ -275,9 +275,9 @@ pub fn build_reply(query: &Message, answer: &Answer) -> Message {
             // a client that checks names sees a well-formed chain.
             if let (Some(q), Some(resolved)) = (&question, &answer.resolved_name)
                 && &q.name != resolved
-                && !answer.records.is_empty()
             {
-                let ttl = answer.records.iter().map(|r| r.ttl).min().unwrap_or(0);
+                let ttl = answer.records.iter().map(|r| r.ttl).min()
+                    .unwrap_or(answer.negative_ttl);
                 reply.answers.push(Record::new(
                     q.name.clone(),
                     ttl,
@@ -338,6 +338,31 @@ mod tests {
         assert!(r.opt().is_some());
         let bytes = r.encode().unwrap();
         Message::decode(&bytes).unwrap();
+    }
+
+    #[test]
+    fn only_an_expanded_found_answer_gets_a_cname() {
+        let query = Message::query(
+            1,
+            Question::new(Name::parse("printer").unwrap(), rtype::AAAA),
+        );
+        for (outcome, resolved, count) in [
+            (Outcome::Found, "printer.lan", 1),
+            (Outcome::Found, "PRINTER", 0),
+            (Outcome::NotFound, "printer.lan", 0),
+            (Outcome::Unavailable, "printer.lan", 0),
+        ] {
+            let answer = Answer {
+                outcome,
+                resolved_name: Some(Name::parse(resolved).unwrap()),
+                ..Default::default()
+            };
+            let reply = build_reply(&query, &answer);
+            assert_eq!(reply.answers.len(), count);
+            if count == 1 {
+                assert_eq!(reply.answers[0].ttl, 0);
+            }
+        }
     }
 
     #[test]
