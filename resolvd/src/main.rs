@@ -116,10 +116,14 @@ impl Resolvd {
                 Action::Send {
                     tx,
                     server,
+                    interface,
                     tcp,
                     payload,
                 } => {
-                    if let Err(e) = self.upstream.send(tx, server, tcp, payload) {
+                    if let Err(e) =
+                        self.upstream
+                            .send(tx, server, interface.as_deref(), tcp, payload)
+                    {
                         log::warn(format_args!("upstream {server}: {e}"));
                         follow_ups.extend(if upstream::is_local_failure(&e) {
                             self.engine.local_failed(tx, now)
@@ -154,11 +158,10 @@ impl Resolvd {
     }
 
     fn reply(&mut self, stream: UnixStream, reply: Reply) {
-        if let Err(e) = self.replies.enqueue(
-            stream,
-            control::response_frame(&reply),
-            Instant::now(),
-        ) {
+        if let Err(e) =
+            self.replies
+                .enqueue(stream, control::response_frame(&reply), Instant::now())
+        {
             log::warn(format_args!("control: reply failed: {e}"));
         }
     }
@@ -216,7 +219,6 @@ impl Resolvd {
     }
 
     fn status(&self, now: Instant) -> StatusReport {
-        let demoted = self.engine.demoted(now);
         let c = &self.engine.counters;
         StatusReport {
             hostname: self
@@ -244,7 +246,7 @@ impl Resolvd {
                     demoted: s
                         .servers
                         .iter()
-                        .filter(|a| demoted.contains(a))
+                        .filter(|a| self.engine.is_demoted(**a, &s.id, now))
                         .map(|a| a.to_string())
                         .collect(),
                 })
@@ -273,7 +275,20 @@ fn to_scope(s: &DnsScope) -> Scope {
     Scope {
         id: s.ifid.clone(),
         interface: s.name.clone(),
-        servers: s.servers.iter().filter_map(|a| a.parse().ok()).collect(),
+        servers: s
+            .servers
+            .iter()
+            .filter_map(|a| match upstream::scope_server(a, &s.name) {
+                Ok(server) => Some(server),
+                Err(error) => {
+                    log::warn(format_args!(
+                        "DNS scope {}: ignoring server {a:?}: {error}",
+                        s.name
+                    ));
+                    None
+                }
+            })
+            .collect(),
         domains: s
             .domains
             .iter()
@@ -481,10 +496,16 @@ fn main() -> ExitCode {
             .into_iter()
             .map(|(id, fd)| (id, push(&mut fds, fd, libc::POLLIN)))
             .collect();
-        let reply_slots: Vec<_> = r.replies.fds().into_iter()
+        let reply_slots: Vec<_> = r
+            .replies
+            .fds()
+            .into_iter()
             .map(|(id, fd)| (id, push(&mut fds, fd, libc::POLLOUT)))
             .collect();
-        let stub_reply_slots: Vec<_> = r.stub.reply_fds().into_iter()
+        let stub_reply_slots: Vec<_> = r
+            .stub
+            .reply_fds()
+            .into_iter()
             .map(|(id, fd)| (id, push(&mut fds, fd, libc::POLLOUT)))
             .collect();
         let upstream_slots: Vec<(u64, usize)> = r
@@ -624,7 +645,9 @@ fn main() -> ExitCode {
         r.stub.expire(now);
         let expired = r.replies.expire(now);
         if expired > 0 {
-            log::warn(format_args!("control: reply failed: write deadline expired ({expired} clients)"));
+            log::warn(format_args!(
+                "control: reply failed: write deadline expired ({expired} clients)"
+            ));
         }
         r.clients
             .retain(|_, c| now.duration_since(c.since) < control::CLIENT_TIMEOUT);
