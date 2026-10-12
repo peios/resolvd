@@ -221,6 +221,9 @@ struct Task {
     /// The candidate in flight.
     current: Option<Name>,
     scope: Option<String>,
+    /// Upstream transactions charged to the whole question, across names and
+    /// transports. A transaction answered NXDOMAIN that moves the question to
+    /// its next candidate is refunded; failures and TCP retries are not.
     attempt: u32,
     /// Servers already asked for this candidate, so a retry goes elsewhere.
     tried: Vec<IpAddr>,
@@ -538,7 +541,7 @@ impl Engine {
         self.counters.upstream_answered += 1;
 
         if message.header.truncated && !tcp {
-            // Ask again over TCP, same server, not counted as an attempt.
+            // Ask again over TCP on the same server, spending another attempt.
             return self.send(task_id, server, true, now);
         }
         let code = message.rcode();
@@ -601,6 +604,12 @@ impl Engine {
                         .insert(CacheKey::new(&candidate, rtype, &scope), entry, now);
                 }
                 if outcome == Outcome::NotFound && more {
+                    // A valid NXDOMAIN is an answer, not a failure: the
+                    // transaction that carried it is not charged to the
+                    // question's budget, so every candidate can be asked.
+                    if let Some(task) = self.tasks.get_mut(&task_id) {
+                        task.attempt = task.attempt.saturating_sub(1);
+                    }
                     return self.next_candidate(task_id, now);
                 }
                 let answer = Answer {
@@ -761,7 +770,6 @@ impl Engine {
             );
         };
         task.current = Some(candidate.clone());
-        task.attempt = 0;
         task.tried.clear();
         let rtype = task.rtype;
         let no_cache = task.no_cache;
@@ -852,9 +860,8 @@ impl Engine {
             .iter()
             .copied()
             .find(|s| !task.tried.contains(s))
-            .unwrap_or(servers[attempt as usize % servers.len()]);
+            .unwrap_or(servers[task.tried.len() % servers.len()]);
         if let Some(task) = self.tasks.get_mut(&id) {
-            task.attempt += 1;
             task.tried.push(server);
         }
         self.send(id, server, false, now)
@@ -864,6 +871,20 @@ impl Engine {
         let Some(task) = self.tasks.get(&id) else {
             return Vec::new();
         };
+        // TCP truncation retries arrive here directly. All transports spend
+        // the same question budget, even after moving to a search candidate.
+        if task.attempt >= MAX_ATTEMPTS {
+            let scope = task.scope.clone().unwrap_or_default();
+            return self.settle(
+                id,
+                Answer {
+                    outcome: Outcome::Unavailable,
+                    interface: self.interface_of(&scope),
+                    ..Default::default()
+                },
+                now,
+            );
+        }
         let candidate = task
             .current
             .clone()
@@ -906,6 +927,7 @@ impl Engine {
             },
         );
         if let Some(task) = self.tasks.get_mut(&id) {
+            task.attempt += 1;
             task.tx = Some(tx);
         }
         self.counters.upstream_sent += 1;
@@ -2070,6 +2092,102 @@ mod tests {
         match &actions[0] {
             Action::Send { tcp, .. } => assert!(tcp),
             other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn nxdomain_moves_to_the_next_candidate_without_spending_the_budget() {
+        let mut e = Engine::new(1);
+        e.set_scopes(vec![scope(
+            "lan",
+            &["10.0.2.3"],
+            &["one.test", "two.test"],
+            true,
+        )]);
+        let mut now = Instant::now();
+        let (tx, _, q) = sent(&e.resolve(1, "printer", rtype::A, false, now));
+        assert_eq!(q.questions[0].name, n("printer.one.test"));
+        let actions = e.received(tx, &reply(&q, vec![], rcode::NXDOMAIN), now);
+        let (_, _, q) = sent(&actions);
+        assert_eq!(q.questions[0].name, n("printer.two.test"));
+        // The second candidate still has the whole budget for failures.
+        now += SERVER_TIMEOUT;
+        sent(&e.tick(now));
+        now += SERVER_TIMEOUT;
+        sent(&e.tick(now));
+        now += SERVER_TIMEOUT;
+        assert_eq!(done(&e.tick(now)).outcome, Outcome::Unavailable);
+        assert_eq!(e.counters.upstream_sent, 4);
+        assert_eq!(e.in_flight(), 0);
+    }
+
+    #[test]
+    fn more_search_candidates_than_attempts_are_all_asked() {
+        let mut e = Engine::new(1);
+        let domains = ["a.test", "b.test", "c.test", "d.test", "e.test"];
+        e.set_scopes(vec![scope("lan", &["10.0.2.3"], &domains, true)]);
+        let now = Instant::now();
+        let mut actions = e.resolve(1, "printer", rtype::A, false, now);
+        for domain in &domains[..4] {
+            let (tx, _, q) = sent(&actions);
+            assert_eq!(q.questions[0].name, n(&format!("printer.{domain}")));
+            actions = e.received(tx, &reply(&q, vec![], rcode::NXDOMAIN), now);
+        }
+        let (tx, _, q) = sent(&actions);
+        assert_eq!(q.questions[0].name, n("printer.e.test"));
+        let found = Record::new(
+            n("printer.e.test"),
+            60,
+            RData::A("10.0.2.50".parse().unwrap()),
+        );
+        let answer = done(&e.received(tx, &reply(&q, vec![found], rcode::NOERROR), now));
+        assert_eq!(answer.outcome, Outcome::Found);
+        assert_eq!(e.counters.upstream_sent, 5);
+    }
+
+    #[test]
+    fn truncation_retry_consumes_the_question_budget() {
+        let mut e = engine();
+        let mut now = Instant::now();
+        let (tx, server, q) = sent(&e.resolve(1, "large.example", rtype::TXT, false, now));
+        let mut truncated = Message::reply_to(&q);
+        truncated.header.truncated = true;
+        let actions = e.received(tx, &truncated.encode().unwrap(), now);
+        let (_, tcp_server, _) = sent(&actions);
+        assert_eq!(server, tcp_server);
+        assert!(matches!(actions[0], Action::Send { tcp: true, .. }));
+        now += SERVER_TIMEOUT;
+        let (tx, _, q) = sent(&e.tick(now));
+        let mut truncated = Message::reply_to(&q);
+        truncated.header.truncated = true;
+        assert_eq!(
+            done(&e.received(tx, &truncated.encode().unwrap(), now)).outcome,
+            Outcome::Unavailable
+        );
+        assert_eq!(e.counters.upstream_sent, 3);
+        assert_eq!(e.in_flight(), 0);
+    }
+
+    #[test]
+    fn final_budgeted_attempt_can_still_complete_successfully() {
+        for code in [rcode::NOERROR, rcode::NXDOMAIN] {
+            let mut e = engine();
+            let mut now = Instant::now();
+            sent(&e.resolve(1, "last.example", rtype::A, false, now));
+            now += SERVER_TIMEOUT;
+            sent(&e.tick(now));
+            now += SERVER_TIMEOUT;
+            let (tx, _, q) = sent(&e.tick(now));
+            let answer = done(&e.received(tx, &reply(&q, vec![], code), now));
+            assert_eq!(
+                answer.outcome,
+                if code == rcode::NXDOMAIN {
+                    Outcome::NotFound
+                } else {
+                    Outcome::Found
+                }
+            );
+            assert_eq!(e.counters.upstream_sent, 3);
         }
     }
 
