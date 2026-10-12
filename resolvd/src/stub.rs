@@ -9,7 +9,7 @@
 //! legitimately want) and never a routable address.
 
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::os::fd::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
@@ -19,8 +19,9 @@ use libresolv::{Outcome, STUB_ADDRESS, STUB_PORT};
 
 use crate::engine::Answer;
 use crate::log;
+use crate::reply_queue::Replies;
 
-/// A TCP client has this long to send a query and read its answer.
+/// A TCP client has this long to send a query. Reply writes have their own deadline.
 pub const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Stub {
@@ -29,6 +30,7 @@ pub struct Stub {
     /// TCP connections still reading a query.
     clients: HashMap<u64, TcpClient>,
     next_client: u64,
+    replies: Replies<TcpStream>,
 }
 
 pub struct TcpClient {
@@ -64,6 +66,7 @@ impl Stub {
             tcp,
             clients: HashMap::new(),
             next_client: 1,
+            replies: Replies::default(),
         })
     }
 
@@ -173,7 +176,7 @@ impl Stub {
         if c.buf.len() < 2 + len {
             return None;
         }
-        let mut client = self.clients.remove(&id)?;
+        let client = self.clients.remove(&id)?;
         match parse_query(&client.buf[2..2 + len]) {
             Ok(query) => Some(Incoming::Query {
                 origin: Origin::Tcp {
@@ -182,7 +185,7 @@ impl Stub {
                 },
             }),
             Err(Some(reply)) => {
-                send_tcp(&mut client.stream, &reply);
+                self.send_tcp(client.stream, &reply);
                 Some(Incoming::Nothing)
             }
             Err(None) => Some(Incoming::Nothing),
@@ -193,10 +196,13 @@ impl Stub {
     pub fn expire(&mut self, now: Instant) {
         self.clients
             .retain(|_, c| now.duration_since(c.since) < TCP_TIMEOUT);
+        self.replies.expire(now);
     }
 
     pub fn next_deadline(&self) -> Option<Instant> {
-        self.clients.values().map(|c| c.since + TCP_TIMEOUT).min()
+        self.clients.values().map(|c| c.since + TCP_TIMEOUT)
+            .chain(self.replies.next_deadline())
+            .min()
     }
 
     /// Answer a query at its origin.
@@ -208,23 +214,29 @@ impl Stub {
                     let _ = self.udp.send_to(&bytes, peer);
                 }
             }
-            Origin::Tcp { mut stream, query } => {
+            Origin::Tcp { stream, query } => {
                 let reply = build_reply(&query, answer);
                 if let Ok(bytes) = reply.encode() {
-                    send_tcp(&mut stream, &bytes);
+                    self.send_tcp(stream, &bytes);
                 }
             }
         }
     }
-}
 
-fn send_tcp(stream: &mut TcpStream, message: &[u8]) {
-    let _ = stream.set_nonblocking(false);
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
-    let mut frame = Vec::with_capacity(2 + message.len());
-    frame.extend_from_slice(&(message.len() as u16).to_be_bytes());
-    frame.extend_from_slice(message);
-    let _ = stream.write_all(&frame);
+    pub fn reply_fds(&self) -> Vec<(u64, RawFd)> {
+        self.replies.fds()
+    }
+
+    pub fn service_reply(&mut self, id: u64, now: Instant) {
+        let _ = self.replies.service(id, now);
+    }
+
+    fn send_tcp(&mut self, stream: TcpStream, message: &[u8]) {
+        let mut frame = Vec::with_capacity(2 + message.len());
+        frame.extend_from_slice(&(message.len() as u16).to_be_bytes());
+        frame.extend_from_slice(message);
+        let _ = self.replies.enqueue(stream, frame, Instant::now());
+    }
 }
 
 /// Decode a query, or produce the error reply it deserves. `Err(None)` is
