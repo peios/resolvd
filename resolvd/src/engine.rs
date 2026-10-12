@@ -126,6 +126,8 @@ pub struct Answer {
     pub rcode: u16,
     /// The name the records are at, after search expansion.
     pub resolved_name: Option<Name>,
+    /// Remaining cache lifetime of an empty answer, for the stub's expansion CNAME.
+    pub negative_ttl: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -244,6 +246,8 @@ struct Lookup {
     results: Vec<(u16, Answer)>,
 }
 
+type Entropy = dyn FnMut(&mut [u8]) -> std::io::Result<()> + Send;
+
 pub struct Engine {
     scopes: Vec<Scope>,
     fallback_servers: Vec<IpAddr>,
@@ -256,12 +260,16 @@ pub struct Engine {
     txs: HashMap<Txid, Tx>,
     lookups: HashMap<Qid, Lookup>,
     next_id: u64,
-    rng: u64,
+    entropy: Box<Entropy>,
     pub counters: Counters,
 }
 
 impl Engine {
-    pub fn new(seed: u64) -> Engine {
+    /// The caller supplies fresh cryptographic bytes for each upstream send.
+    /// Tests and fuzzers can inject a deterministic source without doing I/O.
+    pub fn with_entropy(
+        entropy: impl FnMut(&mut [u8]) -> std::io::Result<()> + Send + 'static,
+    ) -> Engine {
         Engine {
             scopes: Vec::new(),
             fallback_servers: Vec::new(),
@@ -274,9 +282,20 @@ impl Engine {
             txs: HashMap::new(),
             lookups: HashMap::new(),
             next_id: 1,
-            rng: seed | 1,
+            entropy: Box::new(entropy),
             counters: Counters::default(),
         }
+    }
+
+    #[cfg(test)]
+    fn new(mut seed: u64) -> Engine {
+        Self::with_entropy(move |out| {
+            for byte in out {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                *byte = (seed >> 32) as u8;
+            }
+            Ok(())
+        })
     }
 
     // ------------------------------------------------------- configuration
@@ -389,12 +408,25 @@ impl Engine {
                 }),
             }];
         };
-        let id = self.start_task(Owner::Resolve(qid), name, rtype, no_cache);
-        self.advance(id, now)
+        self.resolve_name(qid, name, rtype, no_cache, now)
     }
 
+    /// Resolve the already-decoded IN-class name without presentation parsing.
     pub fn resolve_question(&mut self, qid: Qid, question: &Question, now: Instant) -> Vec<Action> {
-        self.resolve(qid, &question.name.to_string(), question.rtype, false, now)
+        self.counters.queries += 1;
+        self.resolve_name(qid, question.name.clone(), question.rtype, false, now)
+    }
+
+    fn resolve_name(
+        &mut self,
+        qid: Qid,
+        name: Name,
+        rtype: u16,
+        no_cache: bool,
+        now: Instant,
+    ) -> Vec<Action> {
+        let id = self.start_task(Owner::Resolve(qid), name, rtype, no_cache);
+        self.advance(id, now)
     }
 
     pub fn lookup(&mut self, qid: Qid, name: &str, family: Family, now: Instant) -> Vec<Action> {
@@ -464,30 +496,38 @@ impl Engine {
 
     // --------------------------------------------------------------- inputs
 
+    /// Whether a wire reply belongs to a live transaction. Transports use
+    /// this before closing its socket; ignoring a reply must leave the real
+    /// answer able to arrive on that same socket.
+    pub fn response_matches(&self, tx: Txid, bytes: &[u8]) -> bool {
+        self.matching_response(tx, bytes).is_some()
+    }
+
+    fn matching_response(&self, tx: Txid, bytes: &[u8]) -> Option<Message> {
+        let t = self.txs.get(&tx)?;
+        let message = Message::decode(bytes).ok()?;
+        // Match the ID, response bit, and exactly one 0x20-exact question.
+        if message.header.id != t.dns_id || !message.header.response {
+            return None;
+        }
+        let q = message.question()?;
+        if q.rtype != t.question.rtype
+            || q.class != t.question.class
+            || !same_case(&q.name, &t.question.name)
+        {
+            return None;
+        }
+        Some(message)
+    }
+
     /// A datagram or TCP message arrived for `tx`.
     pub fn received(&mut self, tx: Txid, bytes: &[u8], now: Instant) -> Vec<Action> {
         let Some(t) = self.txs.get(&tx) else {
             return Vec::new();
         };
-        let message = match Message::decode(bytes) {
-            Ok(m) => m,
-            Err(_) => return Vec::new(), // not ours, or garbage; the timer handles it
-        };
-        // Everything must match: id, the question as sent (0x20-exact), and
-        // it must be a response. A forged reply has to guess the port, the
-        // id and the case pattern.
-        if message.header.id != t.dns_id || !message.header.response {
-            return Vec::new();
-        }
-        let Some(q) = message.question() else {
+        let Some(message) = self.matching_response(tx, bytes) else {
             return Vec::new();
         };
-        if q.rtype != t.question.rtype
-            || q.class != t.question.class
-            || !same_case(&q.name, &t.question.name)
-        {
-            return Vec::new();
-        }
         let task_id = t.task;
         let server = t.server;
         let tcp = t.tcp;
@@ -516,14 +556,21 @@ impl Engine {
                 } else {
                     Outcome::Found
                 };
+                let (relevant, effective_name) =
+                    relevant_records(message.answers, &candidate, task.rtype);
+                let alias_ttl = relevant
+                    .iter()
+                    .filter(|r| r.rtype == rtype::CNAME)
+                    .map(|r| r.ttl)
+                    .min()
+                    .unwrap_or(u32::MAX);
                 // Records come back in the case we sent (0x20); give them
                 // the case the caller used. A negative answer carries none:
                 // records riding on an NXDOMAIN are a server's mistake or a
                 // forger's payload, and neither is an answer.
-                let records: Vec<Record> = message
-                    .answers
+                let records: Vec<Record> = relevant
                     .into_iter()
-                    .filter(|r| r.class == dns::class::IN && outcome == Outcome::Found)
+                    .filter(|_| outcome == Outcome::Found)
                     .map(|mut r| {
                         if r.name == candidate {
                             r.name = candidate.clone();
@@ -539,7 +586,7 @@ impl Engine {
                         .unwrap_or(0)
                         .min(MAX_POSITIVE_TTL)
                 } else {
-                    negative_ttl(&message.authority)
+                    negative_ttl(&message.authority, &effective_name).min(alias_ttl)
                 };
                 let entry = Entry {
                     outcome,
@@ -559,6 +606,7 @@ impl Engine {
                 }
                 let answer = Answer {
                     outcome,
+                    negative_ttl: if records.is_empty() { ttl } else { 0 },
                     records,
                     source: Source::Dns,
                     server: Some(server),
@@ -591,6 +639,20 @@ impl Engine {
         self.next_attempt(t.task, now)
     }
 
+    /// A local resource or permission error prevented sending. Preserve
+    /// the bounded retry sequence without attributing the failure to the
+    /// server: a different address or family may still be usable.
+    pub fn local_failed(&mut self, tx: Txid, now: Instant) -> Vec<Action> {
+        let Some(t) = self.txs.remove(&tx) else {
+            return Vec::new();
+        };
+        self.counters.upstream_failed += 1;
+        if let Some(task) = self.tasks.get_mut(&t.task) {
+            task.tx = None;
+        }
+        self.next_attempt(t.task, now)
+    }
+
     /// Time passed. Expired transactions move to the next attempt.
     pub fn tick(&mut self, now: Instant) -> Vec<Action> {
         let expired: Vec<Txid> = self
@@ -613,17 +675,6 @@ impl Engine {
         let id = self.next_id;
         self.next_id += 1;
         id
-    }
-
-    fn random(&mut self) -> u64 {
-        // xorshift64*: not cryptographic, but the id and case pattern are
-        // one of three things a forger must guess (the port is the third).
-        let mut x = self.rng;
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        self.rng = x;
-        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
     }
 
     fn interface_of(&self, scope: &str) -> Option<String> {
@@ -739,6 +790,11 @@ impl Engine {
             }
             let answer = Answer {
                 outcome: entry.outcome,
+                negative_ttl: if entry.records.is_empty() {
+                    entry.expires.saturating_duration_since(now).as_secs() as u32
+                } else {
+                    0
+                },
                 records: entry.records,
                 source: Source::Cache,
                 server: Some(entry.server),
@@ -826,18 +882,26 @@ impl Engine {
             .clone()
             .unwrap_or_else(|| task.original.clone());
         let rtype = task.rtype;
-        let dns_id = self.random() as u16;
-        let mut bits = self.random();
+        // Two ID bytes and 256 independent case bits cover every letter in
+        // a DNS name (whose complete wire form is at most 255 bytes).
+        let mut random = [0u8; 34];
+        if (self.entropy)(&mut random).is_err() {
+            self.counters.refused += 1;
+            return self.settle(
+                id,
+                Answer {
+                    outcome: Outcome::Unavailable,
+                    ..Default::default()
+                },
+                now,
+            );
+        }
+        let dns_id = u16::from_le_bytes([random[0], random[1]]);
         let mut n = 0;
         let name = candidate.randomise_case(|| {
-            if n == 64 {
-                bits = self.random();
-                n = 0;
-            }
-            let b = bits & 1 == 1;
-            bits >>= 1;
+            let flip = random[2 + n / 8] & (1 << (n % 8)) != 0;
             n += 1;
-            b
+            flip
         });
         let question = Question::new(name, rtype);
         let message = Message::query(dns_id, question.clone());
@@ -1085,7 +1149,15 @@ impl Engine {
             if addr.is_loopback() {
                 return ptr(localhost, Source::Synthetic);
             }
-            if let Some((host, _)) = self.hosts.iter().find(|(_, a)| a.contains(&addr)) {
+            // A rebuilt HashMap has a new iteration order. Choose by the
+            // canonical presentation name so reloads cannot change a shared
+            // address's reverse answer merely by changing the hash seed.
+            if let Some((host, _)) = self
+                .hosts
+                .iter()
+                .filter(|(_, a)| a.contains(&addr))
+                .min_by_key(|(host, _)| host.to_lowercase().to_string())
+            {
                 return ptr(host.clone(), Source::Hosts);
             }
             if let Some(h) = &self.hostname
@@ -1105,15 +1177,58 @@ fn same_case(a: &Name, b: &Name) -> bool {
 
 /// RFC 2308: the negative TTL is the SOA's minimum field, bounded by its own
 /// TTL and our cap.
-fn negative_ttl(authority: &[Record]) -> u32 {
+fn negative_ttl(authority: &[Record], name: &Name) -> u32 {
     authority
         .iter()
+        .filter(|r| r.class == dns::class::IN && name.ends_with(&r.name))
         .find_map(|r| match &r.rdata {
             RData::Soa { minimum, .. } => Some((*minimum).min(r.ttl)),
             _ => None,
         })
         .unwrap_or(0)
         .min(MAX_NEGATIVE_TTL)
+}
+
+/// Keep the requested RRset and its CNAME path, in the server's record order.
+/// ANY and explicit CNAME questions stop at the queried owner. Other types
+/// follow at most the same sixteen aliases as lookup's address chase.
+fn relevant_records(records: Vec<Record>, candidate: &Name, qtype: u16) -> (Vec<Record>, Name) {
+    let mut keep = vec![false; records.len()];
+    let mut name = candidate.clone();
+    let mut seen = Vec::new();
+    for depth in 0..=16 {
+        let mut terminal = false;
+        for (index, record) in records.iter().enumerate() {
+            if record.class == dns::class::IN
+                && record.name == name
+                && (record.rtype == qtype || qtype == rtype::ANY)
+            {
+                keep[index] = true;
+                terminal = true;
+            }
+        }
+        if terminal || depth == 16 || seen.contains(&name) {
+            break;
+        }
+        seen.push(name.clone());
+        let next = records.iter().enumerate().find_map(|(index, record)| {
+            if record.class == dns::class::IN && record.name == name {
+                if let RData::Cname(target) = &record.rdata {
+                    return Some((index, target.clone()));
+                }
+            }
+            None
+        });
+        let Some((index, target)) = next else { break };
+        keep[index] = true;
+        name = target;
+    }
+    let records = records
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(record, keep)| keep.then_some(record))
+        .collect();
+    (records, name)
 }
 
 /// Fold a lookup's per-type answers into addresses plus a canonical name.
@@ -1124,19 +1239,23 @@ fn combine(lookup: Lookup) -> Addresses {
     };
     let mut any_found = false;
     let mut any_unavailable = false;
-    let mut source = Source::Local;
+    let mut metadata_rank = None;
     for (rtype, answer) in &lookup.results {
         match answer.outcome {
             Outcome::Found => {
                 any_found = true;
-                source = answer.source;
                 let start = answer
                     .resolved_name
                     .clone()
                     .unwrap_or_else(|| lookup.name.clone());
                 let (canonical, addrs) = chase(&answer.records, &start, *rtype);
-                if !addrs.is_empty() {
+                // Prefer an address-producing family, then A over AAAA, for
+                // both metadata fields. Arrival order still orders addresses.
+                let rank = (addrs.is_empty(), *rtype);
+                if metadata_rank.is_none_or(|best| rank < best) {
                     out.canonical = canonical;
+                    out.source = answer.source;
+                    metadata_rank = Some(rank);
                 }
                 out.addresses.extend(addrs);
             }
@@ -1151,7 +1270,6 @@ fn combine(lookup: Lookup) -> Addresses {
     } else {
         Outcome::NotFound
     };
-    out.source = source;
     out
 }
 
@@ -1248,6 +1366,374 @@ mod tests {
     }
 
     #[test]
+    fn stub_names_preserve_wire_labels_and_count_once() {
+        let cases = [
+            vec![b"dot.label".to_vec(), b"example".to_vec()],
+            vec![b"back\\slash\0\x01\xff".to_vec(), b"example".to_vec()],
+            vec![vec![0xc3; 63], b"example".to_vec()],
+            vec![vec![1; 15]; 5],
+        ];
+        for labels in cases {
+            let mut e = engine();
+            let name = Name::from_labels(labels.clone()).unwrap();
+            let actions = e.resolve_question(1, &Question::new(name, rtype::A), Instant::now());
+            let (_, _, query) = sent(&actions);
+            let actual: Vec<_> = query
+                .question()
+                .unwrap()
+                .name
+                .labels()
+                .iter()
+                .map(|label| label.to_ascii_lowercase())
+                .collect();
+            assert_eq!(actual, labels);
+            assert_eq!(e.counters.queries, 1);
+        }
+    }
+
+    #[test]
+    fn empty_lookup_keeps_expansion_and_cname_target() {
+        for records in [
+            vec![],
+            vec![Record::new(
+                n("printer.lan"),
+                30,
+                RData::Cname(n("target.lan")),
+            )],
+        ] {
+            let expected = if records.is_empty() {
+                n("printer.lan")
+            } else {
+                n("target.lan")
+            };
+            let out = combine(Lookup {
+                name: n("printer"),
+                pending: vec![],
+                results: vec![(
+                    rtype::AAAA,
+                    Answer {
+                        outcome: Outcome::Found,
+                        records,
+                        source: Source::Dns,
+                        resolved_name: Some(n("printer.lan")),
+                        ..Default::default()
+                    },
+                )],
+            });
+            assert_eq!(out.canonical, expected);
+            assert_eq!(out.source, Source::Dns);
+            assert_eq!(out.outcome, Outcome::Found);
+            assert!(out.addresses.is_empty());
+        }
+    }
+
+    #[test]
+    fn stub_single_label_with_embedded_dot_uses_search_domain() {
+        let mut e = engine();
+        let name = Name::from_labels(vec![b"dot.label".to_vec()]).unwrap();
+        let actions = e.resolve_question(1, &Question::new(name, rtype::A), Instant::now());
+        let (_, _, query) = sent(&actions);
+        let labels: Vec<_> = query
+            .question()
+            .unwrap()
+            .name
+            .labels()
+            .iter()
+            .map(|label| label.to_ascii_lowercase())
+            .collect();
+        assert_eq!(labels, vec![b"dot.label".to_vec(), b"lan".to_vec()]);
+    }
+
+    #[test]
+    fn lookup_metadata_prefers_addresses_then_a_in_either_completion_order() {
+        for a_has_addresses in [false, true] {
+            for aaaa_has_addresses in [false, true] {
+                for reverse in [false, true] {
+                    let mut results = vec![
+                        (
+                            rtype::A,
+                            Answer {
+                                outcome: Outcome::Found,
+                                source: Source::Cache,
+                                resolved_name: Some(n("a.lan")),
+                                records: if a_has_addresses {
+                                    vec![Record::new(
+                                        n("a.lan"),
+                                        11,
+                                        RData::A("10.0.2.9".parse().unwrap()),
+                                    )]
+                                } else {
+                                    vec![]
+                                },
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            rtype::AAAA,
+                            Answer {
+                                outcome: Outcome::Found,
+                                source: Source::Dns,
+                                resolved_name: Some(n("aaaa.lan")),
+                                records: if aaaa_has_addresses {
+                                    vec![Record::new(
+                                        n("aaaa.lan"),
+                                        22,
+                                        RData::Aaaa("fd00::9".parse().unwrap()),
+                                    )]
+                                } else {
+                                    vec![]
+                                },
+                                ..Default::default()
+                            },
+                        ),
+                    ];
+                    if reverse {
+                        results.reverse();
+                    }
+                    let out = combine(Lookup {
+                        name: n("printer"),
+                        pending: vec![],
+                        results,
+                    });
+                    let prefer_a = a_has_addresses || !aaaa_has_addresses;
+                    assert_eq!(
+                        out.canonical,
+                        n(if prefer_a { "a.lan" } else { "aaaa.lan" })
+                    );
+                    assert_eq!(
+                        out.source,
+                        if prefer_a { Source::Cache } else { Source::Dns }
+                    );
+                    assert_eq!(
+                        out.addresses.len(),
+                        usize::from(a_has_addresses) + usize::from(aaaa_has_addresses)
+                    );
+                    if a_has_addresses && aaaa_has_addresses {
+                        assert_eq!(out.addresses[0].1, if reverse { 22 } else { 11 });
+                    }
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn unrelated_zero_ttl_records_do_not_escape_or_prevent_caching() {
+        let mut e = engine();
+        let now = Instant::now();
+        let (tx, _, q) = sent(&e.resolve(1, "wanted.example", rtype::A, false, now));
+        let good = Record::new(
+            n("wanted.example"),
+            60,
+            RData::A("10.0.2.9".parse().unwrap()),
+        );
+        let bytes = reply(
+            &q,
+            vec![
+                Record::new(
+                    n("elsewhere.example"),
+                    0,
+                    RData::A("10.0.2.99".parse().unwrap()),
+                ),
+                good.clone(),
+                Record::new(
+                    n("wanted.example"),
+                    0,
+                    RData::Aaaa("fd00::99".parse().unwrap()),
+                ),
+            ],
+            rcode::NOERROR,
+        );
+        let answer = done(&e.received(tx, &bytes, now));
+        assert_eq!(answer.records, vec![good]);
+        let cached = done(&e.resolve(
+            2,
+            "wanted.example",
+            rtype::A,
+            false,
+            now + Duration::from_secs(1),
+        ));
+        assert_eq!(cached.source, Source::Cache);
+        assert_eq!(cached.records.len(), 1);
+        assert_eq!(cached.records[0].ttl, 59);
+    }
+
+    #[test]
+    fn relevant_chain_preserves_server_order_and_stops_explicit_cname_and_any() {
+        let alias = Record::new(n("alias.example"), 30, RData::Cname(n("target.example")));
+        let target = Record::new(
+            n("target.example"),
+            60,
+            RData::A("10.0.2.9".parse().unwrap()),
+        );
+        let other = Record::new(
+            n("elsewhere.example"),
+            0,
+            RData::A("10.0.2.99".parse().unwrap()),
+        );
+        let mut wrong_class = alias.clone();
+        wrong_class.class = 3;
+        let records = vec![target.clone(), other, wrong_class, alias.clone()];
+        let (kept, end) = relevant_records(records.clone(), &n("alias.example"), rtype::A);
+        assert_eq!(kept, vec![target, alias.clone()]);
+        assert_eq!(end, n("target.example"));
+        for qtype in [rtype::CNAME, rtype::ANY] {
+            let (kept, end) = relevant_records(records.clone(), &n("alias.example"), qtype);
+            assert_eq!(kept, vec![alias.clone()]);
+            assert_eq!(end, n("alias.example"));
+        }
+    }
+
+    #[test]
+    fn relevant_chain_is_bounded_and_does_not_revisit_aliases() {
+        let records: Vec<_> = (0..20)
+            .map(|i| {
+                Record::new(
+                    n(&format!("n{i}.example")),
+                    60,
+                    RData::Cname(n(&format!("n{}.example", i + 1))),
+                )
+            })
+            .collect();
+        let (kept, end) = relevant_records(records, &n("n0.example"), rtype::A);
+        assert_eq!(kept.len(), 16);
+        assert_eq!(end, n("n16.example"));
+        let records = vec![
+            Record::new(n("a.example"), 60, RData::Cname(n("b.example"))),
+            Record::new(n("b.example"), 60, RData::Cname(n("a.example"))),
+        ];
+        let (kept, end) = relevant_records(records.clone(), &n("a.example"), rtype::A);
+        assert_eq!(kept, records);
+        assert_eq!(end, n("a.example"));
+    }
+
+    #[test]
+    fn negative_soa_must_have_the_right_class_and_enclose_the_effective_name() {
+        let soa = |owner: &str, ttl| {
+            Record::new(
+                n(owner),
+                ttl,
+                RData::Soa {
+                    mname: n("ns.example"),
+                    rname: n("hostmaster.example"),
+                    serial: 1,
+                    refresh: 1,
+                    retry: 1,
+                    expire: 1,
+                    minimum: 60,
+                },
+            )
+        };
+        let mut wrong_class = soa("example", 0);
+        wrong_class.class = 3;
+        let records = vec![soa("other.example", 0), wrong_class, soa("example", 30)];
+        assert_eq!(negative_ttl(&records, &n("host.example")), 30);
+        assert_eq!(negative_ttl(&records, &n("host.notexample")), 0);
+        assert_eq!(negative_ttl(&[soa(".", 30)], &n("anywhere")), 30);
+
+        let mut e = engine();
+        let now = Instant::now();
+        let (tx, _, query) = sent(&e.resolve(1, "alias.example", rtype::A, false, now));
+        let mut response = Message::reply_to(&query);
+        response.header.rcode = rcode::NXDOMAIN;
+        response.answers.push(Record::new(
+            n("alias.example"),
+            10,
+            RData::Cname(n("missing.other")),
+        ));
+        response.authority.push(soa("other", 30));
+        let answer = done(&e.received(tx, &response.encode().unwrap(), now));
+        assert_eq!(answer.outcome, Outcome::NotFound);
+        assert!(answer.records.is_empty());
+        assert_eq!(
+            done(&e.resolve(
+                2,
+                "alias.example",
+                rtype::A,
+                false,
+                now + Duration::from_secs(9)
+            ))
+            .source,
+            Source::Cache
+        );
+        sent(&e.resolve(
+            3,
+            "alias.example",
+            rtype::A,
+            false,
+            now + Duration::from_secs(10),
+        ));
+    }
+
+    #[test]
+    fn entropy_failure_sends_nothing_and_releases_the_lookup() {
+        let mut e = engine();
+        let mut calls = 0;
+        e.entropy = Box::new(move |out| {
+            calls += 1;
+            if calls == 1 {
+                // Even a partially filled buffer must never reach the wire.
+                out[..2].fill(0x55);
+                Err(std::io::ErrorKind::PermissionDenied.into())
+            } else {
+                out.fill(0xAA);
+                Ok(())
+            }
+        });
+        let now = Instant::now();
+        let actions = e.resolve(1, "entropy.example.", rtype::A, false, now);
+        assert_eq!(done(&actions).outcome, Outcome::Unavailable);
+        assert!(!actions.iter().any(|a| matches!(a, Action::Send { .. })));
+        assert!(e.tasks.is_empty() && e.txs.is_empty() && e.lookups.is_empty());
+        assert_eq!(e.counters.upstream_sent, 0);
+        assert_eq!(e.counters.refused, 1);
+        let (_, _, query) = sent(&e.resolve(2, "entropy.example.", rtype::A, false, now));
+        assert_eq!(query.header.id, 0xAAAA);
+        assert_eq!(e.counters.upstream_sent, 1);
+    }
+
+    #[test]
+    fn each_attempt_draws_fresh_id_and_case_bytes_including_long_names() {
+        let mut e = engine();
+        let mut calls = 0u8;
+        e.entropy = Box::new(move |out| {
+            calls += 1;
+            assert_eq!(out.len(), 34);
+            out.fill(if calls == 1 { 0 } else { 0xFF });
+            out[..2].copy_from_slice(&(calls as u16).to_le_bytes());
+            Ok(())
+        });
+        // Maximum wire length: four labels plus the final root octet.
+        let name = format!(
+            "{}.{}.{}.{}.",
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(61)
+        );
+        let now = Instant::now();
+        let (_, _, first) = sent(&e.resolve(1, &name, rtype::A, false, now));
+        assert_eq!(first.header.id, 1);
+        assert_eq!(first.questions[0].name, n(&name));
+        let (_, _, second) = sent(&e.tick(now + SERVER_TIMEOUT));
+        assert_eq!(second.header.id, 2);
+        assert_eq!(
+            second.questions[0].name.labels(),
+            n(&name.to_ascii_uppercase()).labels()
+        );
+        assert_eq!(first.questions[0].name.labels(), n(&name).labels());
+    }
+
+    #[test]
+    fn local_answers_do_not_need_upstream_entropy() {
+        let mut e = engine();
+        e.entropy = Box::new(|_| panic!("local answers must not request entropy"));
+        assert_eq!(
+            done(&e.resolve(1, "localhost", rtype::A, false, Instant::now())).outcome,
+            Outcome::Found
+        );
+    }
+
+    #[test]
     fn localhost_hostname_and_hosts_are_synthetic() {
         let mut e = engine();
         let now = Instant::now();
@@ -1271,6 +1757,44 @@ mod tests {
         let a = done(&e.resolve(7, "thing.local", rtype::A, false, now));
         assert_eq!(a.outcome, Outcome::NotFound);
         assert_eq!(e.counters.upstream_sent, 0);
+    }
+
+    #[test]
+    fn shared_static_reverse_is_stable_across_host_table_rebuilds() {
+        let now = Instant::now();
+        let addresses: Vec<IpAddr> = vec!["10.0.2.9".parse().unwrap(), "fd99::9".parse().unwrap()];
+        // New HashMaps exercise independent hash seeds as well as both insertion orders.
+        for rebuild in 0..32 {
+            let mut e = engine();
+            for names in [
+                ["Zulu.home", "alpha.home", "ALPHA-1.home"],
+                ["ALPHA-1.home", "alpha.home", "Zulu.home"],
+            ] {
+                e.set_hosts(
+                    names
+                        .into_iter()
+                        .map(|name| (n(name), addresses.clone()))
+                        .collect(),
+                );
+                for address in &addresses {
+                    let answer = done(&e.reverse(1, *address, now));
+                    assert_eq!(answer.source, Source::Hosts);
+                    assert_eq!(answer.records.len(), 1);
+                    assert_eq!(
+                        answer.records[0].rdata,
+                        RData::Ptr(n("ALPHA-1.home")),
+                        "rebuild {rebuild}"
+                    );
+                    let reverse = match address {
+                        IpAddr::V4(a) => Name::reverse_v4(*a),
+                        IpAddr::V6(a) => Name::reverse_v6(*a),
+                    };
+                    let any = done(&e.resolve(2, &reverse.to_string(), rtype::ANY, false, now));
+                    assert_eq!(any.records, answer.records);
+                }
+                assert_eq!(e.counters.upstream_sent, 0);
+            }
+        }
     }
 
     #[test]
@@ -1387,6 +1911,31 @@ mod tests {
     }
 
     #[test]
+    fn local_send_failures_preserve_bounded_retries_without_server_demotion() {
+        let mut e = engine();
+        e.set_scopes(vec![scope("lan", &["10.0.2.3", "10.0.2.4"], &[], true)]);
+        let now = Instant::now();
+        let mut actions = e.resolve(1, "example.com", rtype::A, false, now);
+        let (_, first, _) = sent(&actions);
+        for attempt in 0..MAX_ATTEMPTS {
+            let (tx, server, _) = sent(&actions);
+            if attempt == 1 {
+                assert_ne!(server, first);
+            }
+            actions = e.local_failed(tx, now);
+            assert!(e.demoted(now).is_empty());
+            assert!(e.local_failed(tx, now).is_empty());
+        }
+        assert_eq!(done(&actions).outcome, Outcome::Unavailable);
+        assert_eq!(e.in_flight(), 0);
+        assert_eq!(e.counters.upstream_sent, MAX_ATTEMPTS as u64);
+        assert_eq!(e.counters.upstream_failed, MAX_ATTEMPTS as u64);
+        // Not cached: a later question can use the same healthy server.
+        let (_, retried_server, _) = sent(&e.resolve(2, "example.com", rtype::A, false, now));
+        assert_eq!(retried_server, first);
+    }
+
+    #[test]
     fn timeouts_walk_servers_then_give_up_unavailable() {
         let mut e = Engine::new(1);
         e.set_scopes(vec![scope("lan", &["10.0.2.3", "10.0.2.4"], &[], true)]);
@@ -1410,6 +1959,71 @@ mod tests {
         assert_eq!(e.demoted(now).len(), 2);
         // An Unavailable is never cached.
         sent(&e.resolve(2, "example.com", rtype::A, false, now));
+    }
+
+    #[test]
+    fn expanded_nodata_cname_uses_the_negative_lifetime_and_ages_with_the_cache() {
+        let now = Instant::now();
+        // SOA minimum, SOA TTL, resolver cap, and no cacheable SOA.
+        for (soa, expected) in [
+            (Some((80, 30)), 30),
+            (Some((20, 90)), 20),
+            (Some((86_400, 86_400)), MAX_NEGATIVE_TTL),
+            (None, 0),
+        ] {
+            let mut e = engine();
+            let (tx, _, q) = sent(&e.resolve(1, "PrInTeR", rtype::AAAA, false, now));
+            let mut m = Message::reply_to(&q);
+            if let Some((ttl, minimum)) = soa {
+                m.authority.push(Record::new(
+                    n("lan"),
+                    ttl,
+                    RData::Soa {
+                        mname: n("ns.lan"),
+                        rname: n("hostmaster.lan"),
+                        serial: 1,
+                        refresh: 1,
+                        retry: 1,
+                        expire: 1,
+                        minimum,
+                    },
+                ));
+            }
+            let answer = done(&e.received(tx, &m.encode().unwrap(), now));
+            assert_eq!(answer.outcome, Outcome::Found);
+            assert!(answer.records.is_empty());
+            assert_eq!(answer.negative_ttl, expected);
+            let query = Message::query(9, Question::new(n("PrInTeR"), rtype::AAAA));
+            let rendered = crate::stub::build_reply(&query, &answer);
+            assert_eq!(rendered.answers.len(), 1);
+            assert_eq!(rendered.answers[0].name.labels(), n("PrInTeR").labels());
+            assert_eq!(rendered.answers[0].rdata, RData::Cname(n("printer.lan")));
+            assert_eq!(rendered.answers[0].ttl, expected);
+            if expected > 0 {
+                for elapsed in [
+                    Duration::from_millis(2_500),
+                    Duration::from_secs(u64::from(expected)) - Duration::from_millis(1),
+                ] {
+                    let cached = done(&e.resolve(2, "PrInTeR", rtype::AAAA, false, now + elapsed));
+                    assert_eq!(cached.source, Source::Cache);
+                    let remaining =
+                        (Duration::from_secs(u64::from(expected)) - elapsed).as_secs() as u32;
+                    assert_eq!(cached.negative_ttl, remaining);
+                    assert_eq!(
+                        crate::stub::build_reply(&query, &cached).answers[0].ttl,
+                        remaining
+                    );
+                }
+            }
+            // No SOA means no cache admission; otherwise expiry is exact.
+            sent(&e.resolve(
+                3,
+                "PrInTeR",
+                rtype::AAAA,
+                false,
+                now + Duration::from_secs(u64::from(expected)),
+            ));
+        }
     }
 
     #[test]

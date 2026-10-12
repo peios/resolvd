@@ -41,7 +41,7 @@ fuzz_target!(|input: Input| {
         1 => Outcome::NotFound,
         _ => Outcome::Unavailable,
     };
-    let answer = Answer { outcome, records, source: Source::Dns, server: None, interface: None, rcode: 0, resolved_name: resolved };
+    let answer = Answer { outcome, records, source: Source::Dns, server: None, interface: None, rcode: 0, resolved_name: resolved, negative_ttl: 0 };
     let reply = build_reply(&query, &answer);
     let bytes = reply.encode().expect("a reply encodes");
     Message::decode(&bytes).expect("our reply decodes");

@@ -9,7 +9,7 @@
 //! legitimately want) and never a routable address.
 
 use std::collections::HashMap;
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::net::{SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::os::fd::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
@@ -17,10 +17,12 @@ use std::time::{Duration, Instant};
 use dns::{Message, RData, Record, rcode};
 use libresolv::{Outcome, STUB_ADDRESS, STUB_PORT};
 
+use crate::accept_backoff::AcceptBackoff;
 use crate::engine::Answer;
 use crate::log;
+use crate::reply_queue::Replies;
 
-/// A TCP client has this long to send a query and read its answer.
+/// A TCP client has this long to send a query. Reply writes have their own deadline.
 pub const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub struct Stub {
@@ -29,6 +31,8 @@ pub struct Stub {
     /// TCP connections still reading a query.
     clients: HashMap<u64, TcpClient>,
     next_client: u64,
+    replies: Replies<TcpStream>,
+    accept_backoff: AcceptBackoff,
 }
 
 pub struct TcpClient {
@@ -64,6 +68,8 @@ impl Stub {
             tcp,
             clients: HashMap::new(),
             next_client: 1,
+            replies: Replies::default(),
+            accept_backoff: AcceptBackoff::default(),
         })
     }
 
@@ -126,6 +132,7 @@ impl Stub {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => {
+                    self.accept_backoff.failed(Instant::now());
                     log::warn(format_args!("stub tcp accept: {e}"));
                     break;
                 }
@@ -145,11 +152,12 @@ impl Stub {
     pub fn service_client(&mut self, id: u64) -> Option<Incoming> {
         let c = self.clients.get_mut(&id)?;
         let mut chunk = [0u8; 4096];
+        let mut eof = false;
         loop {
             match c.stream.read(&mut chunk) {
                 Ok(0) => {
-                    self.clients.remove(&id);
-                    return Some(Incoming::Nothing);
+                    eof = true;
+                    break;
                 }
                 Ok(n) => {
                     c.buf.extend_from_slice(&chunk[..n]);
@@ -167,13 +175,21 @@ impl Stub {
             }
         }
         if c.buf.len() < 2 {
+            if eof {
+                self.clients.remove(&id);
+                return Some(Incoming::Nothing);
+            }
             return None;
         }
         let len = u16::from_be_bytes([c.buf[0], c.buf[1]]) as usize;
         if c.buf.len() < 2 + len {
+            if eof {
+                self.clients.remove(&id);
+                return Some(Incoming::Nothing);
+            }
             return None;
         }
-        let mut client = self.clients.remove(&id)?;
+        let client = self.clients.remove(&id)?;
         match parse_query(&client.buf[2..2 + len]) {
             Ok(query) => Some(Incoming::Query {
                 origin: Origin::Tcp {
@@ -182,7 +198,7 @@ impl Stub {
                 },
             }),
             Err(Some(reply)) => {
-                send_tcp(&mut client.stream, &reply);
+                self.send_tcp(client.stream, &reply);
                 Some(Incoming::Nothing)
             }
             Err(None) => Some(Incoming::Nothing),
@@ -193,10 +209,18 @@ impl Stub {
     pub fn expire(&mut self, now: Instant) {
         self.clients
             .retain(|_, c| now.duration_since(c.since) < TCP_TIMEOUT);
+        self.replies.expire(now);
     }
 
-    pub fn next_deadline(&self) -> Option<Instant> {
-        self.clients.values().map(|c| c.since + TCP_TIMEOUT).min()
+    pub fn listener_fd(&self, now: Instant) -> RawFd {
+        self.accept_backoff.poll_fd(self.tcp.as_raw_fd(), now)
+    }
+
+    pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
+        self.clients.values().map(|c| c.since + TCP_TIMEOUT)
+            .chain(self.replies.next_deadline())
+            .chain(self.accept_backoff.deadline(now))
+            .min()
     }
 
     /// Answer a query at its origin.
@@ -208,23 +232,29 @@ impl Stub {
                     let _ = self.udp.send_to(&bytes, peer);
                 }
             }
-            Origin::Tcp { mut stream, query } => {
+            Origin::Tcp { stream, query } => {
                 let reply = build_reply(&query, answer);
                 if let Ok(bytes) = reply.encode() {
-                    send_tcp(&mut stream, &bytes);
+                    self.send_tcp(stream, &bytes);
                 }
             }
         }
     }
-}
 
-fn send_tcp(stream: &mut TcpStream, message: &[u8]) {
-    let _ = stream.set_nonblocking(false);
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
-    let mut frame = Vec::with_capacity(2 + message.len());
-    frame.extend_from_slice(&(message.len() as u16).to_be_bytes());
-    frame.extend_from_slice(message);
-    let _ = stream.write_all(&frame);
+    pub fn reply_fds(&self) -> Vec<(u64, RawFd)> {
+        self.replies.fds()
+    }
+
+    pub fn service_reply(&mut self, id: u64, now: Instant) {
+        let _ = self.replies.service(id, now);
+    }
+
+    fn send_tcp(&mut self, stream: TcpStream, message: &[u8]) {
+        let mut frame = Vec::with_capacity(2 + message.len());
+        frame.extend_from_slice(&(message.len() as u16).to_be_bytes());
+        frame.extend_from_slice(message);
+        let _ = self.replies.enqueue(stream, frame, Instant::now());
+    }
 }
 
 /// Decode a query, or produce the error reply it deserves. `Err(None)` is
@@ -258,8 +288,11 @@ pub fn parse_query(bytes: &[u8]) -> Result<Message, Option<Vec<u8>>> {
     if message.header.opcode != 0 {
         return error(rcode::NOTIMP);
     }
-    if message.question().is_none() {
+    let Some(question) = message.question() else {
         return error(rcode::FORMERR);
+    };
+    if question.class != dns::class::IN {
+        return error(rcode::NOTIMP);
     }
     Ok(message)
 }
@@ -275,9 +308,9 @@ pub fn build_reply(query: &Message, answer: &Answer) -> Message {
             // a client that checks names sees a well-formed chain.
             if let (Some(q), Some(resolved)) = (&question, &answer.resolved_name)
                 && &q.name != resolved
-                && !answer.records.is_empty()
             {
-                let ttl = answer.records.iter().map(|r| r.ttl).min().unwrap_or(0);
+                let ttl = answer.records.iter().map(|r| r.ttl).min()
+                    .unwrap_or(answer.negative_ttl);
                 reply.answers.push(Record::new(
                     q.name.clone(),
                     ttl,
@@ -341,6 +374,88 @@ mod tests {
     }
 
     #[test]
+    fn half_closed_tcp_preserves_complete_queries_and_drops_partial_frames() {
+        use std::io::Write;
+        use std::net::Shutdown;
+        let query = Message::query(
+            41,
+            Question::new(Name::parse("localhost").unwrap(), rtype::A),
+        );
+        let payload = query.encode().unwrap();
+        let mut frame = (payload.len() as u16).to_be_bytes().to_vec();
+        frame.extend_from_slice(&payload);
+        for end in [0, 1, frame.len() - 1, frame.len()] {
+            let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut peer = TcpStream::connect(tcp.local_addr().unwrap()).unwrap();
+            let (stream, _) = tcp.accept().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            peer.write_all(&frame[..end]).unwrap();
+            peer.shutdown(Shutdown::Write).unwrap();
+            let mut stub = Stub {
+                udp: UdpSocket::bind("127.0.0.1:0").unwrap(),
+                tcp,
+                clients: HashMap::from([(
+                    1,
+                    TcpClient {
+                        stream,
+                        buf: Vec::new(),
+                        since: Instant::now(),
+                    },
+                )]),
+                next_client: 2,
+                replies: Replies::default(),
+                accept_backoff: AcceptBackoff::default(),
+            };
+            let incoming = stub.service_client(1);
+            assert!(stub.clients.is_empty());
+            if end == frame.len() {
+                let Some(Incoming::Query { origin }) = incoming else {
+                    panic!("complete query discarded")
+                };
+                stub.answer(
+                    origin,
+                    &Answer {
+                        outcome: Outcome::NotFound,
+                        ..Default::default()
+                    },
+                );
+                let mut bytes = Vec::new();
+                peer.read_to_end(&mut bytes).unwrap();
+                let reply = Message::decode(&bytes[2..]).unwrap();
+                assert_eq!(reply.header.id, 41);
+                assert_eq!(reply.header.rcode, rcode::NXDOMAIN);
+            } else {
+                assert!(matches!(incoming, Some(Incoming::Nothing)));
+            }
+        }
+    }
+
+    #[test]
+    fn only_an_expanded_found_answer_gets_a_cname() {
+        let query = Message::query(
+            1,
+            Question::new(Name::parse("printer").unwrap(), rtype::AAAA),
+        );
+        for (outcome, resolved, count) in [
+            (Outcome::Found, "printer.lan", 1),
+            (Outcome::Found, "PRINTER", 0),
+            (Outcome::NotFound, "printer.lan", 0),
+            (Outcome::Unavailable, "printer.lan", 0),
+        ] {
+            let answer = Answer {
+                outcome,
+                resolved_name: Some(Name::parse(resolved).unwrap()),
+                ..Default::default()
+            };
+            let reply = build_reply(&query, &answer);
+            assert_eq!(reply.answers.len(), count);
+            if count == 1 {
+                assert_eq!(reply.answers[0].ttl, 0);
+            }
+        }
+    }
+
+    #[test]
     fn outcomes_map_to_rcodes() {
         let q = Message::query(
             1,
@@ -382,5 +497,26 @@ mod tests {
             Message::decode(&reply).unwrap().header.rcode,
             rcode::FORMERR
         );
+    }
+
+    #[test]
+    fn unsupported_classes_are_notimp_with_the_original_question() {
+        for class in [0, 3, 4, 255, u16::MAX] {
+            let mut q = Message::query(
+                7,
+                Question::new(Name::parse("localhost").unwrap(), rtype::A),
+            );
+            q.questions[0].class = class;
+            let raw = parse_query(&q.encode().unwrap()).err().flatten().unwrap();
+            let reply = Message::decode(&raw).unwrap();
+            assert_eq!(reply.header.rcode, rcode::NOTIMP);
+            assert_eq!(reply.questions, q.questions);
+            assert!(reply.answers.is_empty());
+        }
+        let q = Message::query(
+            7,
+            Question::new(Name::parse("localhost").unwrap(), rtype::A),
+        );
+        assert!(parse_query(&q.encode().unwrap()).is_ok());
     }
 }
