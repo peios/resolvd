@@ -1,7 +1,8 @@
 //! The parts of resolvd that decide answers, as a library: the engine, its
-//! cache, and the DNS rendering of the stub door. Pure — no sockets, no
-//! registry — so the fuzz targets in `fuzz/` and the tests can drive them
-//! as a whole system. The binary (`main.rs`) adds the I/O.
+//! cache, and the DNS rendering of the stub door. No sockets or registry
+//! access; query entropy is injected by the caller so tests and fuzzers
+//! can drive a deterministic system. The binary (`main.rs`) supplies I/O
+//! and kernel randomness.
 
 pub mod accept_backoff;
 pub mod cache;

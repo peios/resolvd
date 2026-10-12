@@ -245,6 +245,8 @@ struct Lookup {
     results: Vec<(u16, Answer)>,
 }
 
+type Entropy = dyn FnMut(&mut [u8]) -> std::io::Result<()> + Send;
+
 pub struct Engine {
     scopes: Vec<Scope>,
     fallback_servers: Vec<IpAddr>,
@@ -257,12 +259,16 @@ pub struct Engine {
     txs: HashMap<Txid, Tx>,
     lookups: HashMap<Qid, Lookup>,
     next_id: u64,
-    rng: u64,
+    entropy: Box<Entropy>,
     pub counters: Counters,
 }
 
 impl Engine {
-    pub fn new(seed: u64) -> Engine {
+    /// The caller supplies fresh cryptographic bytes for each upstream send.
+    /// Tests and fuzzers can inject a deterministic source without doing I/O.
+    pub fn with_entropy(
+        entropy: impl FnMut(&mut [u8]) -> std::io::Result<()> + Send + 'static,
+    ) -> Engine {
         Engine {
             scopes: Vec::new(),
             fallback_servers: Vec::new(),
@@ -275,9 +281,20 @@ impl Engine {
             txs: HashMap::new(),
             lookups: HashMap::new(),
             next_id: 1,
-            rng: seed | 1,
+            entropy: Box::new(entropy),
             counters: Counters::default(),
         }
+    }
+
+    #[cfg(test)]
+    fn new(mut seed: u64) -> Engine {
+        Self::with_entropy(move |out| {
+            for byte in out {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                *byte = (seed >> 32) as u8;
+            }
+            Ok(())
+        })
     }
 
     // ------------------------------------------------------- configuration
@@ -659,17 +676,6 @@ impl Engine {
         id
     }
 
-    fn random(&mut self) -> u64 {
-        // xorshift64*: not cryptographic, but the id and case pattern are
-        // one of three things a forger must guess (the port is the third).
-        let mut x = self.rng;
-        x ^= x >> 12;
-        x ^= x << 25;
-        x ^= x >> 27;
-        self.rng = x;
-        x.wrapping_mul(0x2545_F491_4F6C_DD1D)
-    }
-
     fn interface_of(&self, scope: &str) -> Option<String> {
         self.scopes
             .iter()
@@ -863,18 +869,26 @@ impl Engine {
             .clone()
             .unwrap_or_else(|| task.original.clone());
         let rtype = task.rtype;
-        let dns_id = self.random() as u16;
-        let mut bits = self.random();
+        // Two ID bytes and 256 independent case bits cover every letter in
+        // a DNS name (whose complete wire form is at most 255 bytes).
+        let mut random = [0u8; 34];
+        if (self.entropy)(&mut random).is_err() {
+            self.counters.refused += 1;
+            return self.settle(
+                id,
+                Answer {
+                    outcome: Outcome::Unavailable,
+                    ..Default::default()
+                },
+                now,
+            );
+        }
+        let dns_id = u16::from_le_bytes([random[0], random[1]]);
         let mut n = 0;
         let name = candidate.randomise_case(|| {
-            if n == 64 {
-                bits = self.random();
-                n = 0;
-            }
-            let b = bits & 1 == 1;
-            bits >>= 1;
+            let flip = random[2 + n / 8] & (1 << (n % 8)) != 0;
             n += 1;
-            b
+            flip
         });
         let question = Question::new(name, rtype);
         let message = Message::query(dns_id, question.clone());
@@ -1634,6 +1648,75 @@ mod tests {
             false,
             now + Duration::from_secs(10),
         ));
+    }
+
+    #[test]
+    fn entropy_failure_sends_nothing_and_releases_the_lookup() {
+        let mut e = engine();
+        let mut calls = 0;
+        e.entropy = Box::new(move |out| {
+            calls += 1;
+            if calls == 1 {
+                // Even a partially filled buffer must never reach the wire.
+                out[..2].fill(0x55);
+                Err(std::io::ErrorKind::PermissionDenied.into())
+            } else {
+                out.fill(0xAA);
+                Ok(())
+            }
+        });
+        let now = Instant::now();
+        let actions = e.resolve(1, "entropy.example.", rtype::A, false, now);
+        assert_eq!(done(&actions).outcome, Outcome::Unavailable);
+        assert!(!actions.iter().any(|a| matches!(a, Action::Send { .. })));
+        assert!(e.tasks.is_empty() && e.txs.is_empty() && e.lookups.is_empty());
+        assert_eq!(e.counters.upstream_sent, 0);
+        assert_eq!(e.counters.refused, 1);
+        let (_, _, query) = sent(&e.resolve(2, "entropy.example.", rtype::A, false, now));
+        assert_eq!(query.header.id, 0xAAAA);
+        assert_eq!(e.counters.upstream_sent, 1);
+    }
+
+    #[test]
+    fn each_attempt_draws_fresh_id_and_case_bytes_including_long_names() {
+        let mut e = engine();
+        let mut calls = 0u8;
+        e.entropy = Box::new(move |out| {
+            calls += 1;
+            assert_eq!(out.len(), 34);
+            out.fill(if calls == 1 { 0 } else { 0xFF });
+            out[..2].copy_from_slice(&(calls as u16).to_le_bytes());
+            Ok(())
+        });
+        // Maximum wire length: four labels plus the final root octet.
+        let name = format!(
+            "{}.{}.{}.{}.",
+            "a".repeat(63),
+            "b".repeat(63),
+            "c".repeat(63),
+            "d".repeat(61)
+        );
+        let now = Instant::now();
+        let (_, _, first) = sent(&e.resolve(1, &name, rtype::A, false, now));
+        assert_eq!(first.header.id, 1);
+        assert_eq!(first.questions[0].name, n(&name));
+        let (_, _, second) = sent(&e.tick(now + SERVER_TIMEOUT));
+        assert_eq!(second.header.id, 2);
+        assert_eq!(
+            second.questions[0].name.labels(),
+            n(&name.to_ascii_uppercase()).labels()
+        );
+        assert_eq!(first.questions[0].name.labels(), n(&name).labels());
+    }
+
+    #[test]
+    fn local_answers_do_not_need_upstream_entropy() {
+        let mut e = engine();
+        e.entropy = Box::new(|_| panic!("local answers must not request entropy"));
+        assert_eq!(
+            done(&e.resolve(1, "localhost", rtype::A, false, Instant::now())).outcome,
+            Outcome::Found
+        );
     }
 
     #[test]
