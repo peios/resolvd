@@ -126,6 +126,8 @@ pub struct Answer {
     pub rcode: u16,
     /// The name the records are at, after search expansion.
     pub resolved_name: Option<Name>,
+    /// Remaining cache lifetime of an empty answer, for the stub's expansion CNAME.
+    pub negative_ttl: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -558,6 +560,7 @@ impl Engine {
                 }
                 let answer = Answer {
                     outcome,
+                    negative_ttl: if records.is_empty() { ttl } else { 0 },
                     records,
                     source: Source::Dns,
                     server: Some(server),
@@ -739,6 +742,11 @@ impl Engine {
             }
             let answer = Answer {
                 outcome: entry.outcome,
+                negative_ttl: if entry.records.is_empty() {
+                    entry.expires.saturating_duration_since(now).as_secs() as u32
+                } else {
+                    0
+                },
                 records: entry.records,
                 source: Source::Cache,
                 server: Some(entry.server),
@@ -1396,6 +1404,71 @@ mod tests {
         assert_eq!(e.demoted(now).len(), 2);
         // An Unavailable is never cached.
         sent(&e.resolve(2, "example.com", rtype::A, false, now));
+    }
+
+    #[test]
+    fn expanded_nodata_cname_uses_the_negative_lifetime_and_ages_with_the_cache() {
+        let now = Instant::now();
+        // SOA minimum, SOA TTL, resolver cap, and no cacheable SOA.
+        for (soa, expected) in [
+            (Some((80, 30)), 30),
+            (Some((20, 90)), 20),
+            (Some((86_400, 86_400)), MAX_NEGATIVE_TTL),
+            (None, 0),
+        ] {
+            let mut e = engine();
+            let (tx, _, q) = sent(&e.resolve(1, "PrInTeR", rtype::AAAA, false, now));
+            let mut m = Message::reply_to(&q);
+            if let Some((ttl, minimum)) = soa {
+                m.authority.push(Record::new(
+                    n("lan"),
+                    ttl,
+                    RData::Soa {
+                        mname: n("ns.lan"),
+                        rname: n("hostmaster.lan"),
+                        serial: 1,
+                        refresh: 1,
+                        retry: 1,
+                        expire: 1,
+                        minimum,
+                    },
+                ));
+            }
+            let answer = done(&e.received(tx, &m.encode().unwrap(), now));
+            assert_eq!(answer.outcome, Outcome::Found);
+            assert!(answer.records.is_empty());
+            assert_eq!(answer.negative_ttl, expected);
+            let query = Message::query(9, Question::new(n("PrInTeR"), rtype::AAAA));
+            let rendered = crate::stub::build_reply(&query, &answer);
+            assert_eq!(rendered.answers.len(), 1);
+            assert_eq!(rendered.answers[0].name.labels(), n("PrInTeR").labels());
+            assert_eq!(rendered.answers[0].rdata, RData::Cname(n("printer.lan")));
+            assert_eq!(rendered.answers[0].ttl, expected);
+            if expected > 0 {
+                for elapsed in [
+                    Duration::from_millis(2_500),
+                    Duration::from_secs(u64::from(expected)) - Duration::from_millis(1),
+                ] {
+                    let cached = done(&e.resolve(2, "PrInTeR", rtype::AAAA, false, now + elapsed));
+                    assert_eq!(cached.source, Source::Cache);
+                    let remaining =
+                        (Duration::from_secs(u64::from(expected)) - elapsed).as_secs() as u32;
+                    assert_eq!(cached.negative_ttl, remaining);
+                    assert_eq!(
+                        crate::stub::build_reply(&query, &cached).answers[0].ttl,
+                        remaining
+                    );
+                }
+            }
+            // No SOA means no cache admission; otherwise expiry is exact.
+            sent(&e.resolve(
+                3,
+                "PrInTeR",
+                rtype::AAAA,
+                false,
+                now + Duration::from_secs(u64::from(expected)),
+            ));
+        }
     }
 
     #[test]
