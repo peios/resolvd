@@ -123,7 +123,14 @@ fn answer_for(sent: &[u8], code: u8, records: u8, truncated: bool, soa: bool, tt
 }
 
 fuzz_target!(|script: Script| {
-    let mut e = Engine::new(script.seed);
+    let mut state = script.seed;
+    let mut e = Engine::with_entropy(move |out| {
+        for byte in out {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            *byte = (state >> 32) as u8;
+        }
+        Ok(())
+    });
     e.set_scopes(scopes(1));
     e.set_hostname(Some("box"));
     let start = Instant::now();
