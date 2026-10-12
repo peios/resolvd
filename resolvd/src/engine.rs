@@ -1093,7 +1093,15 @@ impl Engine {
             if addr.is_loopback() {
                 return ptr(localhost, Source::Synthetic);
             }
-            if let Some((host, _)) = self.hosts.iter().find(|(_, a)| a.contains(&addr)) {
+            // A rebuilt HashMap has a new iteration order. Choose by the
+            // canonical presentation name so reloads cannot change a shared
+            // address's reverse answer merely by changing the hash seed.
+            if let Some((host, _)) = self
+                .hosts
+                .iter()
+                .filter(|(_, a)| a.contains(&addr))
+                .min_by_key(|(host, _)| host.to_lowercase().to_string())
+            {
                 return ptr(host.clone(), Source::Hosts);
             }
             if let Some(h) = &self.hostname
@@ -1279,6 +1287,44 @@ mod tests {
         let a = done(&e.resolve(7, "thing.local", rtype::A, false, now));
         assert_eq!(a.outcome, Outcome::NotFound);
         assert_eq!(e.counters.upstream_sent, 0);
+    }
+
+    #[test]
+    fn shared_static_reverse_is_stable_across_host_table_rebuilds() {
+        let now = Instant::now();
+        let addresses: Vec<IpAddr> = vec!["10.0.2.9".parse().unwrap(), "fd99::9".parse().unwrap()];
+        // New HashMaps exercise independent hash seeds as well as both insertion orders.
+        for rebuild in 0..32 {
+            let mut e = engine();
+            for names in [
+                ["Zulu.home", "alpha.home", "ALPHA-1.home"],
+                ["ALPHA-1.home", "alpha.home", "Zulu.home"],
+            ] {
+                e.set_hosts(
+                    names
+                        .into_iter()
+                        .map(|name| (n(name), addresses.clone()))
+                        .collect(),
+                );
+                for address in &addresses {
+                    let answer = done(&e.reverse(1, *address, now));
+                    assert_eq!(answer.source, Source::Hosts);
+                    assert_eq!(answer.records.len(), 1);
+                    assert_eq!(
+                        answer.records[0].rdata,
+                        RData::Ptr(n("ALPHA-1.home")),
+                        "rebuild {rebuild}"
+                    );
+                    let reverse = match address {
+                        IpAddr::V4(a) => Name::reverse_v4(*a),
+                        IpAddr::V6(a) => Name::reverse_v6(*a),
+                    };
+                    let any = done(&e.resolve(2, &reverse.to_string(), rtype::ANY, false, now));
+                    assert_eq!(any.records, answer.records);
+                }
+                assert_eq!(e.counters.upstream_sent, 0);
+            }
+        }
     }
 
     #[test]
