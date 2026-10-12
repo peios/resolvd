@@ -15,6 +15,25 @@ use resolvd::engine::Txid;
 
 pub const DNS_PORT: u16 = 53;
 
+/// These failures describe this process or host, not the upstream server.
+/// A different configured address may still work; none should be demoted
+/// on the strength of these errors.
+pub fn is_local_failure(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        Some(
+            libc::EMFILE
+                | libc::ENFILE
+                | libc::ENOMEM
+                | libc::ENOBUFS
+                | libc::EADDRNOTAVAIL
+                | libc::EADDRINUSE
+                | libc::EACCES
+                | libc::EPERM
+        )
+    )
+}
+
 enum TcpState {
     Connecting,
     Sending { frame: Vec<u8>, sent: usize },
@@ -257,4 +276,33 @@ fn connect_nonblocking(addr: SocketAddr) -> io::Result<TcpStream> {
         }
     }
     Ok(TcpStream::from(owned))
+}
+
+#[cfg(test)]
+mod local_failure_tests {
+    use super::*;
+
+    #[test]
+    fn resource_and_permission_errors_do_not_describe_server_health() {
+        for errno in [
+            libc::EMFILE,
+            libc::ENFILE,
+            libc::ENOMEM,
+            libc::ENOBUFS,
+            libc::EADDRNOTAVAIL,
+            libc::EADDRINUSE,
+            libc::EACCES,
+            libc::EPERM,
+        ] {
+            assert!(is_local_failure(&io::Error::from_raw_os_error(errno)));
+        }
+        for errno in [
+            libc::ECONNREFUSED,
+            libc::ENETUNREACH,
+            libc::EHOSTUNREACH,
+            libc::ETIMEDOUT,
+        ] {
+            assert!(!is_local_failure(&io::Error::from_raw_os_error(errno)));
+        }
+    }
 }

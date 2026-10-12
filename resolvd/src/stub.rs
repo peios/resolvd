@@ -17,6 +17,7 @@ use std::time::{Duration, Instant};
 use dns::{Message, RData, Record, rcode};
 use libresolv::{Outcome, STUB_ADDRESS, STUB_PORT};
 
+use crate::accept_backoff::AcceptBackoff;
 use crate::engine::Answer;
 use crate::log;
 
@@ -29,6 +30,7 @@ pub struct Stub {
     /// TCP connections still reading a query.
     clients: HashMap<u64, TcpClient>,
     next_client: u64,
+    accept_backoff: AcceptBackoff,
 }
 
 pub struct TcpClient {
@@ -64,6 +66,7 @@ impl Stub {
             tcp,
             clients: HashMap::new(),
             next_client: 1,
+            accept_backoff: AcceptBackoff::default(),
         })
     }
 
@@ -126,6 +129,7 @@ impl Stub {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(e) => {
+                    self.accept_backoff.failed(Instant::now());
                     log::warn(format_args!("stub tcp accept: {e}"));
                     break;
                 }
@@ -195,8 +199,14 @@ impl Stub {
             .retain(|_, c| now.duration_since(c.since) < TCP_TIMEOUT);
     }
 
-    pub fn next_deadline(&self) -> Option<Instant> {
-        self.clients.values().map(|c| c.since + TCP_TIMEOUT).min()
+    pub fn listener_fd(&self, now: Instant) -> RawFd {
+        self.accept_backoff.poll_fd(self.tcp.as_raw_fd(), now)
+    }
+
+    pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
+        self.clients.values().map(|c| c.since + TCP_TIMEOUT)
+            .chain(self.accept_backoff.deadline(now))
+            .min()
     }
 
     /// Answer a query at its origin.
