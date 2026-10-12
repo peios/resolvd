@@ -18,6 +18,9 @@
     "RestartPolicy is Always (2): a machine without its resolver cannot name",
     "anything, and a restart costs only the cache.",
     "",
+    "LimitNOFILE covers 4096 upstream sockets, their client waiters, 512 pending clients,",
+    "and daemon descriptors with headroom. Local resource failures still fail safely.",
+    "",
     "Shipped by the resolvd package into /usr/share/regim/; inert until an",
     "image names it in [registry] autoapply."
   ],
@@ -33,6 +36,7 @@
         { "name": "Readiness", "type": "dword", "data": 0 },
         { "name": "RuntimeDirectories", "type": "multi", "data": ["resolvd"] },
         { "name": "RestartPolicy", "type": "dword", "data": 2 },
+        { "name": "LimitNOFILE", "type": "dword", "data": 16384 },
         { "name": "ErrorControl", "type": "dword", "data": 0 },
         { "name": "DisplayName", "type": "sz", "data": "Stub resolver" },
         { "name": "Description", "type": "sz", "data": "Name resolution for every program: the native socket, the stub listener on 127.0.0.53, and the hosts NSS shim behind them" }

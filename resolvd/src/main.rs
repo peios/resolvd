@@ -11,7 +11,7 @@ mod control;
 mod netd_link;
 mod upstream;
 
-use resolvd::{engine, log, reply_queue::Replies, stub};
+use resolvd::{accept_backoff, engine, log, reply_queue::Replies, stub};
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -120,7 +120,11 @@ impl Resolvd {
                 } => {
                     if let Err(e) = self.upstream.send(tx, server, tcp, payload) {
                         log::warn(format_args!("upstream {server}: {e}"));
-                        follow_ups.extend(self.engine.failed(tx, now));
+                        follow_ups.extend(if upstream::is_local_failure(&e) {
+                            self.engine.local_failed(tx, now)
+                        } else {
+                            self.engine.failed(tx, now)
+                        });
                     }
                 }
                 Action::Cancel { tx } => self.upstream.cancel(tx),
@@ -429,6 +433,7 @@ fn main() -> ExitCode {
     ));
     notify_ready();
 
+    let mut accept_backoff = accept_backoff::AcceptBackoff::default();
     let mut watch_buffer = vec![0u8; 16384];
     loop {
         let now = Instant::now();
@@ -440,8 +445,9 @@ fn main() -> ExitCode {
         };
         consider(r.engine.next_deadline());
         consider(r.netd.next_deadline());
-        consider(r.stub.next_deadline());
+        consider(r.stub.next_deadline(now));
         consider(r.replies.next_deadline());
+        consider(accept_backoff.deadline(now));
         consider(
             r.clients
                 .values()
@@ -466,9 +472,13 @@ fn main() -> ExitCode {
             });
             fds.len() - 1
         }
-        push(&mut fds, listener.as_raw_fd(), libc::POLLIN);
+        push(
+            &mut fds,
+            accept_backoff.poll_fd(listener.as_raw_fd(), now),
+            libc::POLLIN,
+        );
         push(&mut fds, r.stub.udp.as_raw_fd(), libc::POLLIN);
-        push(&mut fds, r.stub.tcp.as_raw_fd(), libc::POLLIN);
+        push(&mut fds, r.stub.listener_fd(now), libc::POLLIN);
         let netd_slot = r.netd.fd().map(|fd| push(&mut fds, fd, libc::POLLIN));
         let watch_slot = watch
             .as_ref()
@@ -568,7 +578,9 @@ fn main() -> ExitCode {
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(e) => {
+                        accept_backoff.failed(Instant::now());
                         log::warn(format_args!("native accept: {e}"));
                         break;
                     }

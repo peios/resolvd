@@ -598,6 +598,20 @@ impl Engine {
         self.next_attempt(t.task, now)
     }
 
+    /// A local resource or permission error prevented sending. Preserve
+    /// the bounded retry sequence without attributing the failure to the
+    /// server: a different address or family may still be usable.
+    pub fn local_failed(&mut self, tx: Txid, now: Instant) -> Vec<Action> {
+        let Some(t) = self.txs.remove(&tx) else {
+            return Vec::new();
+        };
+        self.counters.upstream_failed += 1;
+        if let Some(task) = self.tasks.get_mut(&t.task) {
+            task.tx = None;
+        }
+        self.next_attempt(t.task, now)
+    }
+
     /// Time passed. Expired transactions move to the next attempt.
     pub fn tick(&mut self, now: Instant) -> Vec<Action> {
         let expired: Vec<Txid> = self
@@ -1378,6 +1392,31 @@ mod tests {
         );
         assert!(e.received(tx, b"garbage", now).is_empty());
         assert_eq!(e.in_flight(), 1);
+    }
+
+    #[test]
+    fn local_send_failures_preserve_bounded_retries_without_server_demotion() {
+        let mut e = engine();
+        e.set_scopes(vec![scope("lan", &["10.0.2.3", "10.0.2.4"], &[], true)]);
+        let now = Instant::now();
+        let mut actions = e.resolve(1, "example.com", rtype::A, false, now);
+        let (_, first, _) = sent(&actions);
+        for attempt in 0..MAX_ATTEMPTS {
+            let (tx, server, _) = sent(&actions);
+            if attempt == 1 {
+                assert_ne!(server, first);
+            }
+            actions = e.local_failed(tx, now);
+            assert!(e.demoted(now).is_empty());
+            assert!(e.local_failed(tx, now).is_empty());
+        }
+        assert_eq!(done(&actions).outcome, Outcome::Unavailable);
+        assert_eq!(e.in_flight(), 0);
+        assert_eq!(e.counters.upstream_sent, MAX_ATTEMPTS as u64);
+        assert_eq!(e.counters.upstream_failed, MAX_ATTEMPTS as u64);
+        // Not cached: a later question can use the same healthy server.
+        let (_, retried_server, _) = sent(&e.resolve(2, "example.com", rtype::A, false, now));
+        assert_eq!(retried_server, first);
     }
 
     #[test]
