@@ -1732,6 +1732,26 @@ mod tests {
     }
 
     #[test]
+    fn case_entropy_consumes_low_bits_only_for_ascii_letters() {
+        let mut e = engine();
+        e.entropy = Box::new(|out| {
+            out.fill(0);
+            out[..2].copy_from_slice(&0x1234u16.to_le_bytes());
+            out[2] = 0b1000_0101;
+            out[3] = 0b0000_0010;
+            Ok(())
+        });
+        let (_, _, query) = sent(&e.resolve(
+            1, "a1b-c.d2ef3gh-i4jk.", rtype::A, false, Instant::now(),
+        ));
+        assert_eq!(query.header.id, 0x1234);
+        // Bits 0, 2, 7 and 9 uppercase a, c, h and j. Digits, hyphens,
+        // label lengths and separators consume no bits, including at the
+        // byte boundary between h and i.
+        assert_eq!(query.questions[0].name.labels(), n("A1b-C.d2ef3gH-i4Jk.").labels());
+    }
+
+    #[test]
     fn local_answers_do_not_need_upstream_entropy() {
         let mut e = engine();
         e.entropy = Box::new(|_| panic!("local answers must not request entropy"));
