@@ -104,14 +104,23 @@ impl Upstream {
     }
 
     /// The descriptor for `tx` is ready. Returns what happened, if the
-    /// transaction is over; the socket is closed on any outcome.
-    pub fn service(&mut self, tx: Txid, revents: i16) -> Option<Event> {
+    /// transaction is over. Unmatched replies are discarded without closing
+    /// the socket or changing the engine's deadline.
+    pub fn service(
+        &mut self,
+        tx: Txid,
+        revents: i16,
+        accepts: impl Fn(&[u8]) -> bool,
+    ) -> Option<Event> {
         if let Some(socket) = self.udp.get(&tx) {
             let mut buf = vec![0u8; 4096];
             let result = socket.recv(&mut buf);
             return match result {
                 Ok(n) => {
                     buf.truncate(n);
+                    if !accepts(&buf) {
+                        return None;
+                    }
                     self.udp.remove(&tx);
                     Some(Event::Received(buf))
                 }
@@ -159,30 +168,49 @@ impl Upstream {
             }
             TcpState::Receiving { buf } => {
                 let mut chunk = [0u8; 4096];
+                let mut read = false;
                 loop {
+                    // Consume complete frames before reading again, including
+                    // before EOF. A valid frame may follow an unmatched one in
+                    // this same buffer, with no further readiness notification.
+                    if buf.len() >= 2 {
+                        let len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
+                        if buf.len() >= 2 + len {
+                            let message = buf[2..2 + len].to_vec();
+                            buf.drain(..2 + len);
+                            if accepts(&message) {
+                                self.tcp.remove(&tx);
+                                return Some(Event::Received(message));
+                            }
+                            continue;
+                        }
+                    }
+                    // Bound work per ready event even if a peer continuously
+                    // sends unmatched frames. An incomplete frame stays here.
+                    if read {
+                        return None;
+                    }
+                    read = true;
                     match t.stream.read(&mut chunk) {
                         Ok(0) => {
                             self.tcp.remove(&tx);
                             return Some(Event::Failed);
                         }
                         Ok(n) => buf.extend_from_slice(&chunk[..n]),
-                        Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
-                        Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                        Err(e)
+                            if matches!(
+                                e.kind(),
+                                io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                            ) =>
+                        {
+                            return None;
+                        }
                         Err(_) => {
                             self.tcp.remove(&tx);
                             return Some(Event::Failed);
                         }
                     }
                 }
-                if buf.len() >= 2 {
-                    let len = u16::from_be_bytes([buf[0], buf[1]]) as usize;
-                    if buf.len() >= 2 + len {
-                        let message = buf[2..2 + len].to_vec();
-                        self.tcp.remove(&tx);
-                        return Some(Event::Received(message));
-                    }
-                }
-                None
             }
         }
     }
@@ -313,9 +341,129 @@ mod pre_query_reset_tests {
             },
         );
         assert!(matches!(
-            upstream.service(1, pfd.revents),
+            upstream.service(1, pfd.revents, |_| false),
             Some(Event::Failed)
         ));
+        assert!(upstream.fds().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::net::{Shutdown, TcpListener};
+
+    fn ready(upstream: &Upstream) -> i16 {
+        let (_, fd, events) = upstream.fds()[0];
+        let mut pollfd = libc::pollfd {
+            fd,
+            events,
+            revents: 0,
+        };
+        // SAFETY: pollfd is one live descriptor record.
+        assert_eq!(unsafe { libc::poll(&mut pollfd, 1, 1000) }, 1);
+        pollfd.revents
+    }
+
+    fn tcp_receiver() -> (Upstream, TcpStream) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let mut upstream = Upstream::new();
+        upstream.tcp.insert(
+            1,
+            Tcp {
+                stream,
+                state: TcpState::Receiving { buf: Vec::new() },
+            },
+        );
+        (upstream, peer)
+    }
+
+    fn frame(payload: &[u8]) -> Vec<u8> {
+        let mut frame = (payload.len() as u16).to_be_bytes().to_vec();
+        frame.extend_from_slice(payload);
+        frame
+    }
+
+    #[test]
+    fn unmatched_udp_keeps_the_socket_for_the_matching_reply() {
+        let socket = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        peer.connect(socket.local_addr().unwrap()).unwrap();
+        socket.connect(peer.local_addr().unwrap()).unwrap();
+        socket.set_nonblocking(true).unwrap();
+        let mut upstream = Upstream::new();
+        upstream.udp.insert(1, socket);
+        peer.send(b"unmatched").unwrap();
+        peer.send(b"matching").unwrap();
+        let revents = ready(&upstream);
+        assert!(upstream.service(1, revents, |p| p == b"matching").is_none());
+        assert_eq!(upstream.fds().len(), 1);
+        let revents = ready(&upstream);
+        match upstream.service(1, revents, |p| p == b"matching") {
+            Some(Event::Received(bytes)) => assert_eq!(bytes, b"matching"),
+            _ => panic!("matching datagram was lost"),
+        }
+        assert!(upstream.fds().is_empty());
+    }
+
+    #[test]
+    fn tcp_uses_a_matching_frame_after_unmatched_frames_and_before_eof() {
+        let (mut upstream, mut peer) = tcp_receiver();
+        let mut bytes = frame(b"unmatched");
+        bytes.extend(frame(b""));
+        bytes.extend(frame(b"matching"));
+        peer.write_all(&bytes).unwrap();
+        peer.shutdown(Shutdown::Write).unwrap();
+        let revents = ready(&upstream);
+        match upstream.service(1, revents, |p| p == b"matching") {
+            Some(Event::Received(bytes)) => assert_eq!(bytes, b"matching"),
+            _ => panic!("matching TCP frame was lost"),
+        }
+        assert!(upstream.fds().is_empty());
+    }
+
+    #[test]
+    fn tcp_retains_a_partial_matching_frame_and_bounds_each_read() {
+        let (mut upstream, mut peer) = tcp_receiver();
+        let matching = vec![42; 8192];
+        let mut bytes = frame(b"unmatched");
+        bytes.extend(frame(&matching));
+        peer.write_all(&bytes).unwrap();
+        let revents = ready(&upstream);
+        assert!(upstream.service(1, revents, |p| p == matching).is_none());
+        assert_eq!(upstream.fds().len(), 1);
+        loop {
+            let revents = ready(&upstream);
+            if let Some(event) = upstream.service(1, revents, |p| p == matching) {
+                match event {
+                    Event::Received(bytes) => assert_eq!(bytes, matching),
+                    Event::Failed => panic!("partial TCP frame was lost"),
+                }
+                break;
+            }
+        }
+        assert!(upstream.fds().is_empty());
+    }
+
+    #[test]
+    fn unmatched_tcp_can_still_fail_on_eof_or_be_cancelled() {
+        let (mut upstream, mut peer) = tcp_receiver();
+        peer.write_all(&frame(b"unmatched")).unwrap();
+        let revents = ready(&upstream);
+        assert!(upstream.service(1, revents, |_| false).is_none());
+        assert_eq!(upstream.fds().len(), 1);
+        peer.shutdown(Shutdown::Write).unwrap();
+        let revents = ready(&upstream);
+        assert!(matches!(
+            upstream.service(1, revents, |_| false),
+            Some(Event::Failed)
+        ));
+        assert!(upstream.fds().is_empty());
+        let (mut upstream, _peer) = tcp_receiver();
+        upstream.cancel(1);
         assert!(upstream.fds().is_empty());
     }
 }
