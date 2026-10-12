@@ -64,7 +64,6 @@ impl NetdLink {
                 log::info(format_args!("subscribed to netd"));
                 self.stream = Some(stream);
                 self.buf.clear();
-                self.backoff = MIN_BACKOFF;
                 self.warned = false;
             }
             Err(e) => {
@@ -126,7 +125,12 @@ impl NetdLink {
             }
             let payload: Vec<u8> = self.buf.drain(..4 + len).skip(4).collect();
             match Reply::decode(&payload) {
-                Ok(Reply::Snapshot(s)) => out.push(s),
+                Ok(Reply::Snapshot(s)) => {
+                    // Connecting is not enough: netd may reject the request
+                    // or close before delivering any usable state.
+                    self.backoff = MIN_BACKOFF;
+                    out.push(s);
+                }
                 Ok(Reply::Error(e)) => {
                     log::warn(format_args!("netd refused the subscription: {e}"));
                     lost = true;
@@ -142,10 +146,76 @@ impl NetdLink {
             log::warn(format_args!("lost the netd channel; reconnecting"));
             self.stream = None;
             self.buf.clear();
-            self.next_try = now + MIN_BACKOFF;
-            self.backoff = MIN_BACKOFF;
+            self.next_try = now + self.backoff;
+            self.backoff = (self.backoff * 2).min(MAX_BACKOFF);
             self.warned = true;
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    fn attach(link: &mut NetdLink) -> UnixStream {
+        let (stream, peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        link.stream = Some(stream);
+        peer
+    }
+
+    #[test]
+    fn refusal_malformed_frame_and_eof_share_a_capped_retry_sequence() {
+        let mut now = Instant::now();
+        let mut link = NetdLink::new(now);
+        for (i, millis) in [500, 1000, 2000, 4000, 8000, 10000, 10000]
+            .into_iter()
+            .enumerate()
+        {
+            let mut peer = attach(&mut link);
+            match i % 3 {
+                0 => libnetd::send(&mut peer, &Reply::Error("denied".into()).encode()).unwrap(),
+                1 => libnetd::send(&mut peer, &[0xc1]).unwrap(),
+                _ => {}
+            }
+            drop(peer);
+            assert!(link.service(now).is_empty());
+            assert!(!link.connected());
+            let delay = Duration::from_millis(millis);
+            assert_eq!(link.next_deadline(), Some(now + delay));
+            now += delay;
+        }
+    }
+
+    #[test]
+    fn only_a_complete_snapshot_resets_the_backoff() {
+        let now = Instant::now();
+        let mut link = NetdLink::new(now);
+        link.backoff = MAX_BACKOFF;
+        let mut peer = attach(&mut link);
+        libnetd::send(&mut peer, &Reply::Ok.encode()).unwrap();
+        assert!(link.service(now).is_empty());
+        assert_eq!(link.backoff, MAX_BACKOFF);
+        let snapshot = Snapshot {
+            hostname: "test-host".into(),
+            scopes: vec![],
+        };
+        let bytes = Reply::Snapshot(snapshot.clone()).encode();
+        peer.write_all(&(bytes.len() as u32).to_le_bytes()[..2])
+            .unwrap();
+        assert!(link.service(now).is_empty());
+        assert_eq!(link.backoff, MAX_BACKOFF);
+        let mut rest = (bytes.len() as u32).to_le_bytes()[2..].to_vec();
+        rest.extend(bytes);
+        peer.write_all(&rest).unwrap();
+        assert_eq!(link.service(now), vec![snapshot]);
+        assert_eq!(link.backoff, MIN_BACKOFF);
+        assert!(link.connected());
+        drop(peer);
+        assert!(link.service(now).is_empty());
+        assert_eq!(link.next_deadline(), Some(now + MIN_BACKOFF));
+        assert_eq!(link.backoff, MIN_BACKOFF * 2);
     }
 }

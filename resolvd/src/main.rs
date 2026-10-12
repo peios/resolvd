@@ -8,10 +8,11 @@
 
 mod config;
 mod control;
+mod entropy;
 mod netd_link;
 mod upstream;
 
-use resolvd::{engine, log, stub};
+use resolvd::{accept_backoff, engine, log, reply_queue::Replies, stub};
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -51,6 +52,7 @@ struct Resolvd {
     stub: stub::Stub,
     netd: netd_link::NetdLink,
     clients: HashMap<u64, control::Client>,
+    replies: Replies<UnixStream>,
     waiters: HashMap<Qid, Waiter>,
     next_id: u64,
 }
@@ -119,7 +121,11 @@ impl Resolvd {
                 } => {
                     if let Err(e) = self.upstream.send(tx, server, tcp, payload) {
                         log::warn(format_args!("upstream {server}: {e}"));
-                        follow_ups.extend(self.engine.failed(tx, now));
+                        follow_ups.extend(if upstream::is_local_failure(&e) {
+                            self.engine.local_failed(tx, now)
+                        } else {
+                            self.engine.failed(tx, now)
+                        });
                     }
                 }
                 Action::Cancel { tx } => self.upstream.cancel(tx),
@@ -136,32 +142,42 @@ impl Resolvd {
             return;
         };
         match (waiter, completion) {
-            (Waiter::Native(mut stream), Completion::Answer(a)) => {
-                control::respond(&mut stream, &Reply::Answer(to_answer(&a)))
+            (Waiter::Native(stream), Completion::Answer(a)) => {
+                self.reply(stream, Reply::Answer(to_answer(&a)))
             }
-            (Waiter::Native(mut stream), Completion::Addresses(a)) => {
-                control::respond(&mut stream, &Reply::Addresses(to_addresses(&a)))
+            (Waiter::Native(stream), Completion::Addresses(a)) => {
+                self.reply(stream, Reply::Addresses(to_addresses(&a)))
             }
             (Waiter::Stub(origin), Completion::Answer(a)) => self.stub.answer(origin, &a),
             (Waiter::Stub(_), Completion::Addresses(_)) => {}
         }
     }
 
-    fn handle_request(&mut self, mut stream: UnixStream, request: Request, now: Instant) {
+    fn reply(&mut self, stream: UnixStream, reply: Reply) {
+        if let Err(e) = self.replies.enqueue(
+            stream,
+            control::response_frame(&reply),
+            Instant::now(),
+        ) {
+            log::warn(format_args!("control: reply failed: {e}"));
+        }
+    }
+
+    fn handle_request(&mut self, stream: UnixStream, request: Request, now: Instant) {
         if !self.control.permits(&stream, request.required_right()) {
-            control::respond(&mut stream, &Reply::Error("access denied".into()));
+            self.reply(stream, Reply::Error("access denied".into()));
             return;
         }
         let qid = self.fresh_id();
         let actions = match request {
             Request::Status => {
-                control::respond(&mut stream, &Reply::Status(self.status(now)));
+                self.reply(stream, Reply::Status(self.status(now)));
                 return;
             }
             Request::Flush => {
                 self.engine.flush();
                 log::info(format_args!("cache flushed"));
-                control::respond(&mut stream, &Reply::Ok);
+                self.reply(stream, Reply::Ok);
                 return;
             }
             Request::Resolve {
@@ -348,20 +364,6 @@ fn notify_ready() {
     }
 }
 
-fn seed() -> u64 {
-    let mut b = [0u8; 8];
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b))
-        .is_ok()
-    {
-        return u64::from_le_bytes(b);
-    }
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(1)
-}
-
 fn main() -> ExitCode {
     let listener = match control::listen() {
         Ok(l) => l,
@@ -392,7 +394,7 @@ fn main() -> ExitCode {
             None
         }
     };
-    let mut engine = Engine::new(seed());
+    let mut engine = Engine::with_entropy(entropy::fill);
     engine.set_hostname(kernel_hostname().as_deref());
     engine.set_fallback(config.servers.clone(), config.search.clone());
     engine.set_hosts(config.hosts.clone());
@@ -405,6 +407,7 @@ fn main() -> ExitCode {
         stub,
         netd: netd_link::NetdLink::new(now),
         clients: HashMap::new(),
+        replies: Replies::default(),
         waiters: HashMap::new(),
         next_id: 1,
     };
@@ -417,6 +420,7 @@ fn main() -> ExitCode {
     ));
     notify_ready();
 
+    let mut accept_backoff = accept_backoff::AcceptBackoff::default();
     let mut watch_buffer = vec![0u8; 16384];
     loop {
         let now = Instant::now();
@@ -428,7 +432,9 @@ fn main() -> ExitCode {
         };
         consider(r.engine.next_deadline());
         consider(r.netd.next_deadline());
-        consider(r.stub.next_deadline());
+        consider(r.stub.next_deadline(now));
+        consider(r.replies.next_deadline());
+        consider(accept_backoff.deadline(now));
         consider(
             r.clients
                 .values()
@@ -453,9 +459,13 @@ fn main() -> ExitCode {
             });
             fds.len() - 1
         }
-        push(&mut fds, listener.as_raw_fd(), libc::POLLIN);
+        push(
+            &mut fds,
+            accept_backoff.poll_fd(listener.as_raw_fd(), now),
+            libc::POLLIN,
+        );
         push(&mut fds, r.stub.udp.as_raw_fd(), libc::POLLIN);
-        push(&mut fds, r.stub.tcp.as_raw_fd(), libc::POLLIN);
+        push(&mut fds, r.stub.listener_fd(now), libc::POLLIN);
         let netd_slot = r.netd.fd().map(|fd| push(&mut fds, fd, libc::POLLIN));
         let watch_slot = watch
             .as_ref()
@@ -470,6 +480,12 @@ fn main() -> ExitCode {
             .client_fds()
             .into_iter()
             .map(|(id, fd)| (id, push(&mut fds, fd, libc::POLLIN)))
+            .collect();
+        let reply_slots: Vec<_> = r.replies.fds().into_iter()
+            .map(|(id, fd)| (id, push(&mut fds, fd, libc::POLLOUT)))
+            .collect();
+        let stub_reply_slots: Vec<_> = r.stub.reply_fds().into_iter()
+            .map(|(id, fd)| (id, push(&mut fds, fd, libc::POLLOUT)))
             .collect();
         let upstream_slots: Vec<(u64, usize)> = r
             .upstream
@@ -495,7 +511,9 @@ fn main() -> ExitCode {
             if fds[*slot].revents == 0 {
                 continue;
             }
-            match r.upstream.service(*tx, fds[*slot].revents) {
+            match r.upstream.service(*tx, fds[*slot].revents, |bytes| {
+                r.engine.response_matches(*tx, bytes)
+            }) {
                 Some(upstream::Event::Received(bytes)) => {
                     let actions = r.engine.received(*tx, &bytes, now);
                     r.perform(actions, now);
@@ -505,6 +523,18 @@ fn main() -> ExitCode {
                     r.perform(actions, now);
                 }
                 None => {}
+            }
+        }
+        for (id, slot) in reply_slots {
+            if fds[slot].revents != 0 {
+                if let Err(e) = r.replies.service(id, Instant::now()) {
+                    log::warn(format_args!("control: reply failed: {e}"));
+                }
+            }
+        }
+        for (id, slot) in stub_reply_slots {
+            if fds[slot].revents != 0 {
+                r.stub.service_reply(id, Instant::now());
             }
         }
         if fds[1].revents != 0 {
@@ -535,7 +565,9 @@ fn main() -> ExitCode {
                         }
                     }
                     Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
                     Err(e) => {
+                        accept_backoff.failed(Instant::now());
                         log::warn(format_args!("native accept: {e}"));
                         break;
                     }
@@ -553,6 +585,10 @@ fn main() -> ExitCode {
                 control::Progress::Incomplete => {}
                 control::Progress::Closed => {
                     r.clients.remove(id);
+                }
+                control::Progress::Reply(reply) => {
+                    let client = r.clients.remove(id).expect("present");
+                    r.reply(client.stream, reply);
                 }
                 control::Progress::Request(request) => {
                     let client = r.clients.remove(id).expect("present");
@@ -586,6 +622,10 @@ fn main() -> ExitCode {
         r.perform(actions, now);
         r.netd.maintain(now);
         r.stub.expire(now);
+        let expired = r.replies.expire(now);
+        if expired > 0 {
+            log::warn(format_args!("control: reply failed: write deadline expired ({expired} clients)"));
+        }
         r.clients
             .retain(|_, c| now.duration_since(c.since) < control::CLIENT_TIMEOUT);
     }
