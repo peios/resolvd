@@ -274,16 +274,53 @@ impl Client {
     }
 }
 
-/// Send a reply. Blocking with a short timeout: a reply is at most a few
-/// KB and a peer that will not drain that is not one worth waiting on.
+/// Send one bounded reply, replacing oversized payloads with a protocol error.
+/// Writes block with a short timeout for peers that will not drain the reply.
 pub fn respond(stream: &mut UnixStream, reply: &Reply) {
     let _ = stream.set_nonblocking(false);
     let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
-    let bytes = reply.encode();
+    let mut bytes = reply.encode();
+    if bytes.len() > MAX_MESSAGE_BYTES {
+        bytes = Reply::Error("reply too large".into()).encode();
+    }
     let mut frame = Vec::with_capacity(4 + bytes.len());
     frame.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
     frame.extend_from_slice(&bytes);
     if let Err(e) = stream.write_all(&frame) {
         log::warn(format_args!("control: reply failed: {e}"));
+    }
+}
+
+#[cfg(test)]
+mod reply_size_tests {
+    use super::*;
+
+    #[test]
+    fn native_reply_ceiling_is_inclusive_and_oversize_gets_an_error() {
+        // The error shape gives an exact controllable encoded payload length;
+        // every reply goes through the same responder regardless of its kind.
+        let overhead = Reply::Error("x".repeat(32768)).encode().len() - 32768;
+        for size in [
+            MAX_MESSAGE_BYTES - 1,
+            MAX_MESSAGE_BYTES,
+            MAX_MESSAGE_BYTES + 1,
+        ] {
+            let reply = Reply::Error("x".repeat(size - overhead));
+            assert_eq!(reply.encode().len(), size);
+            let (mut server, mut peer) = UnixStream::pair().unwrap();
+            respond(&mut server, &reply);
+            drop(server);
+            let mut frame = Vec::new();
+            peer.read_to_end(&mut frame).unwrap();
+            let len = u32::from_le_bytes(frame[..4].try_into().unwrap()) as usize;
+            assert_eq!(len, frame.len() - 4);
+            assert!(len <= MAX_MESSAGE_BYTES, "wrote {len} payload bytes");
+            let expected = if size > MAX_MESSAGE_BYTES {
+                Reply::Error("reply too large".into()).encode()
+            } else {
+                reply.encode()
+            };
+            assert_eq!(&frame[4..], &expected);
+        }
     }
 }
