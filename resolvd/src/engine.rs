@@ -221,7 +221,9 @@ struct Task {
     /// The candidate in flight.
     current: Option<Name>,
     scope: Option<String>,
-    /// Upstream transactions sent for the whole question, across names/transports.
+    /// Upstream transactions charged to the whole question, across names and
+    /// transports. A transaction answered NXDOMAIN that moves the question to
+    /// its next candidate is refunded; failures and TCP retries are not.
     attempt: u32,
     /// Servers already asked for this candidate, so a retry goes elsewhere.
     tried: Vec<IpAddr>,
@@ -602,6 +604,12 @@ impl Engine {
                         .insert(CacheKey::new(&candidate, rtype, &scope), entry, now);
                 }
                 if outcome == Outcome::NotFound && more {
+                    // A valid NXDOMAIN is an answer, not a failure: the
+                    // transaction that carried it is not charged to the
+                    // question's budget, so every candidate can be asked.
+                    if let Some(task) = self.tasks.get_mut(&task_id) {
+                        task.attempt = task.attempt.saturating_sub(1);
+                    }
                     return self.next_candidate(task_id, now);
                 }
                 let answer = Answer {
@@ -2088,7 +2096,7 @@ mod tests {
     }
 
     #[test]
-    fn question_attempt_budget_spans_search_candidates() {
+    fn nxdomain_moves_to_the_next_candidate_without_spending_the_budget() {
         let mut e = Engine::new(1);
         e.set_scopes(vec![scope(
             "lan",
@@ -2102,12 +2110,39 @@ mod tests {
         let actions = e.received(tx, &reply(&q, vec![], rcode::NXDOMAIN), now);
         let (_, _, q) = sent(&actions);
         assert_eq!(q.questions[0].name, n("printer.two.test"));
+        // The second candidate still has the whole budget for failures.
+        now += SERVER_TIMEOUT;
+        sent(&e.tick(now));
         now += SERVER_TIMEOUT;
         sent(&e.tick(now));
         now += SERVER_TIMEOUT;
         assert_eq!(done(&e.tick(now)).outcome, Outcome::Unavailable);
-        assert_eq!(e.counters.upstream_sent, 3);
+        assert_eq!(e.counters.upstream_sent, 4);
         assert_eq!(e.in_flight(), 0);
+    }
+
+    #[test]
+    fn more_search_candidates_than_attempts_are_all_asked() {
+        let mut e = Engine::new(1);
+        let domains = ["a.test", "b.test", "c.test", "d.test", "e.test"];
+        e.set_scopes(vec![scope("lan", &["10.0.2.3"], &domains, true)]);
+        let now = Instant::now();
+        let mut actions = e.resolve(1, "printer", rtype::A, false, now);
+        for domain in &domains[..4] {
+            let (tx, _, q) = sent(&actions);
+            assert_eq!(q.questions[0].name, n(&format!("printer.{domain}")));
+            actions = e.received(tx, &reply(&q, vec![], rcode::NXDOMAIN), now);
+        }
+        let (tx, _, q) = sent(&actions);
+        assert_eq!(q.questions[0].name, n("printer.e.test"));
+        let found = Record::new(
+            n("printer.e.test"),
+            60,
+            RData::A("10.0.2.50".parse().unwrap()),
+        );
+        let answer = done(&e.received(tx, &reply(&q, vec![found], rcode::NOERROR), now));
+        assert_eq!(answer.outcome, Outcome::Found);
+        assert_eq!(e.counters.upstream_sent, 5);
     }
 
     #[test]
