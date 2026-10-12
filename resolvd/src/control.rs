@@ -236,36 +236,33 @@ impl Client {
         })
     }
 
-    /// Read what is available and see whether a request is complete.
+    /// Read the header first, then only the declared payload of one request.
     pub fn read(&mut self) -> Progress {
         let mut chunk = [0u8; 4096];
         loop {
-            match self.stream.read(&mut chunk) {
-                Ok(0) => return Progress::Closed,
-                Ok(n) => {
-                    self.buf.extend_from_slice(&chunk[..n]);
-                    if self.buf.len() > 4 + MAX_MESSAGE_BYTES {
-                        return Progress::Reply(Reply::Error("request too large".into()));
-                    }
+            let target = if self.buf.len() < 4 {
+                4
+            } else {
+                let len = u32::from_le_bytes(self.buf[..4].try_into().expect("header")) as usize;
+                if len > MAX_MESSAGE_BYTES {
+                    return Progress::Reply(Reply::Error("request too large".into()));
                 }
-                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                if self.buf.len() == 4 + len {
+                    return match Request::decode(&self.buf[4..]) {
+                        Ok(r) => Progress::Request(r),
+                        Err(e) => Progress::Reply(Reply::Error(e.to_string())),
+                    };
+                }
+                4 + len
+            };
+            let take = chunk.len().min(target - self.buf.len());
+            match self.stream.read(&mut chunk[..take]) {
+                Ok(0) => return Progress::Closed,
+                Ok(n) => self.buf.extend_from_slice(&chunk[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Progress::Incomplete,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
                 Err(_) => return Progress::Closed,
             }
-        }
-        if self.buf.len() < 4 {
-            return Progress::Incomplete;
-        }
-        let len = u32::from_le_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]) as usize;
-        if len > MAX_MESSAGE_BYTES {
-            return Progress::Reply(Reply::Error("request too large".into()));
-        }
-        if self.buf.len() < 4 + len {
-            return Progress::Incomplete;
-        }
-        match Request::decode(&self.buf[4..4 + len]) {
-            Ok(r) => Progress::Request(r),
-            Err(e) => Progress::Reply(Reply::Error(e.to_string())),
         }
     }
 }
@@ -309,5 +306,86 @@ mod reply_size_tests {
             };
             assert_eq!(&frame[4..], &expected);
         }
+    }
+}
+
+#[cfg(test)]
+mod request_frame_tests {
+    use super::*;
+    use std::io::Write;
+    use std::net::Shutdown;
+
+    fn pair() -> (Client, UnixStream) {
+        let (server, peer) = UnixStream::pair().unwrap();
+        (Client::new(server, Instant::now()).unwrap(), peer)
+    }
+
+    fn frame() -> Vec<u8> {
+        let payload = Request::Status.encode();
+        let mut out = (payload.len() as u32).to_le_bytes().to_vec();
+        out.extend(payload);
+        out
+    }
+
+    #[test]
+    fn fragmented_header_and_payload_resume_until_complete() {
+        let (mut client, mut peer) = pair();
+        let bytes = frame();
+        for (i, byte) in bytes.iter().enumerate() {
+            peer.write_all(&[*byte]).unwrap();
+            let progress = client.read();
+            if i + 1 == bytes.len() {
+                assert!(matches!(progress, Progress::Request(Request::Status)));
+            } else {
+                assert!(matches!(progress, Progress::Incomplete));
+            }
+        }
+        assert_eq!(client.buf, bytes);
+    }
+
+    #[test]
+    fn an_oversized_header_leaves_every_payload_byte_unread() {
+        for length in [MAX_MESSAGE_BYTES as u32 + 1, u32::MAX] {
+            let (mut client, mut peer) = pair();
+            let payload = vec![42; 80_000];
+            peer.write_all(&length.to_le_bytes()).unwrap();
+            peer.write_all(&payload).unwrap();
+            peer.shutdown(Shutdown::Write).unwrap();
+            assert!(matches!(client.read(), Progress::Reply(Reply::Error(e)) if e == "request too large"));
+            assert_eq!(client.buf.len(), 4);
+            let mut unread = Vec::new();
+            client.stream.read_to_end(&mut unread).unwrap();
+            assert_eq!(unread, payload);
+        }
+    }
+
+    #[test]
+    fn a_complete_request_is_decoded_before_trailing_bytes_or_eof() {
+        for trailing in [vec![], vec![42; 80_000], frame()] {
+            let (mut client, mut peer) = pair();
+            let bytes = frame();
+            peer.write_all(&bytes).unwrap();
+            peer.write_all(&trailing).unwrap();
+            peer.shutdown(Shutdown::Write).unwrap();
+            assert!(matches!(client.read(), Progress::Request(Request::Status)));
+            assert_eq!(client.buf, bytes);
+            let mut unread = Vec::new();
+            client.stream.read_to_end(&mut unread).unwrap();
+            assert_eq!(unread, trailing);
+        }
+    }
+
+    #[test]
+    fn eof_before_a_complete_frame_is_dropped_and_empty_payload_is_decoded() {
+        let bytes = frame();
+        for prefix in 0..bytes.len() {
+            let (mut client, mut peer) = pair();
+            peer.write_all(&bytes[..prefix]).unwrap();
+            peer.shutdown(Shutdown::Write).unwrap();
+            assert!(matches!(client.read(), Progress::Closed));
+        }
+        let (mut client, mut peer) = pair();
+        peer.write_all(&0u32.to_le_bytes()).unwrap();
+        assert!(matches!(client.read(), Progress::Reply(Reply::Error(_))));
     }
 }
