@@ -514,7 +514,9 @@ fn main() -> ExitCode {
             if fds[*slot].revents == 0 {
                 continue;
             }
-            match r.upstream.service(*tx, fds[*slot].revents) {
+            match r.upstream.service(*tx, fds[*slot].revents, |bytes| {
+                r.engine.response_matches(*tx, bytes)
+            }) {
                 Some(upstream::Event::Received(bytes)) => {
                     let actions = r.engine.received(*tx, &bytes, now);
                     r.perform(actions, now);

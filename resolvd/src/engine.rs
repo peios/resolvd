@@ -463,30 +463,38 @@ impl Engine {
 
     // --------------------------------------------------------------- inputs
 
+    /// Whether a wire reply belongs to a live transaction. Transports use
+    /// this before closing its socket; ignoring a reply must leave the real
+    /// answer able to arrive on that same socket.
+    pub fn response_matches(&self, tx: Txid, bytes: &[u8]) -> bool {
+        self.matching_response(tx, bytes).is_some()
+    }
+
+    fn matching_response(&self, tx: Txid, bytes: &[u8]) -> Option<Message> {
+        let t = self.txs.get(&tx)?;
+        let message = Message::decode(bytes).ok()?;
+        // Match the ID, response bit, and exactly one 0x20-exact question.
+        if message.header.id != t.dns_id || !message.header.response {
+            return None;
+        }
+        let q = message.question()?;
+        if q.rtype != t.question.rtype
+            || q.class != t.question.class
+            || !same_case(&q.name, &t.question.name)
+        {
+            return None;
+        }
+        Some(message)
+    }
+
     /// A datagram or TCP message arrived for `tx`.
     pub fn received(&mut self, tx: Txid, bytes: &[u8], now: Instant) -> Vec<Action> {
         let Some(t) = self.txs.get(&tx) else {
             return Vec::new();
         };
-        let message = match Message::decode(bytes) {
-            Ok(m) => m,
-            Err(_) => return Vec::new(), // not ours, or garbage; the timer handles it
-        };
-        // Everything must match: id, the question as sent (0x20-exact), and
-        // it must be a response. A forged reply has to guess the port, the
-        // id and the case pattern.
-        if message.header.id != t.dns_id || !message.header.response {
-            return Vec::new();
-        }
-        let Some(q) = message.question() else {
+        let Some(message) = self.matching_response(tx, bytes) else {
             return Vec::new();
         };
-        if q.rtype != t.question.rtype
-            || q.class != t.question.class
-            || !same_case(&q.name, &t.question.name)
-        {
-            return Vec::new();
-        }
         let task_id = t.task;
         let server = t.server;
         let tcp = t.tcp;
