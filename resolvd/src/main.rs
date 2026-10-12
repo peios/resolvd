@@ -8,6 +8,7 @@
 
 mod config;
 mod control;
+mod entropy;
 mod netd_link;
 mod upstream;
 
@@ -348,20 +349,6 @@ fn notify_ready() {
     }
 }
 
-fn seed() -> u64 {
-    let mut b = [0u8; 8];
-    if std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| std::io::Read::read_exact(&mut f, &mut b))
-        .is_ok()
-    {
-        return u64::from_le_bytes(b);
-    }
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos() as u64)
-        .unwrap_or(1)
-}
-
 fn main() -> ExitCode {
     let listener = match control::listen() {
         Ok(l) => l,
@@ -392,7 +379,7 @@ fn main() -> ExitCode {
             None
         }
     };
-    let mut engine = Engine::new(seed());
+    let mut engine = Engine::with_entropy(entropy::fill);
     engine.set_hostname(kernel_hostname().as_deref());
     engine.set_fallback(config.servers.clone(), config.search.clone());
     engine.set_hosts(config.hosts.clone());
