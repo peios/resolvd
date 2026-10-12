@@ -258,3 +258,64 @@ fn connect_nonblocking(addr: SocketAddr) -> io::Result<TcpStream> {
     }
     Ok(TcpStream::from(owned))
 }
+
+#[cfg(test)]
+mod pre_query_reset_tests {
+    use super::*;
+    use std::net::TcpListener;
+
+    // TRM engine-servers.tcp-error-before-query-sent-fails-attempt. Hold
+    // service() until the peer resets, without using a blocked reply write.
+    #[test]
+    fn a_reset_after_handshake_before_query_write_fails_immediately() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let stream = connect_nonblocking(listener.local_addr().unwrap()).unwrap();
+        let (mut peer, _) = listener.accept().unwrap();
+        peer.set_nonblocking(true).unwrap();
+        assert_eq!(
+            peer.read(&mut [0; 1]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        let linger = libc::linger {
+            l_onoff: 1,
+            l_linger: 0,
+        };
+        // SAFETY: live peer socket and initialized linger option.
+        assert_eq!(
+            unsafe {
+                libc::setsockopt(
+                    peer.as_raw_fd(),
+                    libc::SOL_SOCKET,
+                    libc::SO_LINGER,
+                    (&linger as *const libc::linger).cast(),
+                    std::mem::size_of_val(&linger) as libc::socklen_t,
+                )
+            },
+            0
+        );
+        drop(peer);
+        let mut pfd = libc::pollfd {
+            fd: stream.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one live poll record.
+        assert_eq!(unsafe { libc::poll(&mut pfd, 1, 1000) }, 1);
+        let mut upstream = Upstream::new();
+        upstream.tcp.insert(
+            1,
+            Tcp {
+                stream,
+                state: TcpState::Sending {
+                    frame: vec![0, 1, 42],
+                    sent: 0,
+                },
+            },
+        );
+        assert!(matches!(
+            upstream.service(1, pfd.revents),
+            Some(Event::Failed)
+        ));
+        assert!(upstream.fds().is_empty());
+    }
+}

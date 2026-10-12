@@ -6,4 +6,5 @@
 pub mod cache;
 pub mod engine;
 pub mod log;
+pub mod reply_queue;
 pub mod stub;

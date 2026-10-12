@@ -10,7 +10,7 @@
 //! Connections are nonblocking end to end: a client that sends half a
 //! request and stops holds a few bytes of buffer, not the loop.
 
-use std::io::{self, Read, Write};
+use std::io::{self, Read};
 use std::os::fd::AsFd;
 use std::os::unix::fs::PermissionsExt;
 use std::os::unix::net::{UnixListener, UnixStream};
@@ -220,8 +220,9 @@ pub enum Progress {
     Incomplete,
     /// A whole request arrived.
     Request(Request),
-    /// The connection is over, or the bytes were not a request (a reply
-    /// has been sent where one was possible).
+    /// A malformed request should receive this error through the reply queue.
+    Reply(Reply),
+    /// The connection is over.
     Closed,
 }
 
@@ -244,8 +245,7 @@ impl Client {
                 Ok(n) => {
                     self.buf.extend_from_slice(&chunk[..n]);
                     if self.buf.len() > 4 + MAX_MESSAGE_BYTES {
-                        respond(&mut self.stream, &Reply::Error("request too large".into()));
-                        return Progress::Closed;
+                        return Progress::Reply(Reply::Error("request too large".into()));
                     }
                 }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
@@ -258,27 +258,20 @@ impl Client {
         }
         let len = u32::from_le_bytes([self.buf[0], self.buf[1], self.buf[2], self.buf[3]]) as usize;
         if len > MAX_MESSAGE_BYTES {
-            respond(&mut self.stream, &Reply::Error("request too large".into()));
-            return Progress::Closed;
+            return Progress::Reply(Reply::Error("request too large".into()));
         }
         if self.buf.len() < 4 + len {
             return Progress::Incomplete;
         }
         match Request::decode(&self.buf[4..4 + len]) {
             Ok(r) => Progress::Request(r),
-            Err(e) => {
-                respond(&mut self.stream, &Reply::Error(e.to_string()));
-                Progress::Closed
-            }
+            Err(e) => Progress::Reply(Reply::Error(e.to_string())),
         }
     }
 }
 
-/// Send one bounded reply, replacing oversized payloads with a protocol error.
-/// Writes block with a short timeout for peers that will not drain the reply.
-pub fn respond(stream: &mut UnixStream, reply: &Reply) {
-    let _ = stream.set_nonblocking(false);
-    let _ = stream.set_write_timeout(Some(Duration::from_secs(1)));
+/// Frame one bounded reply, replacing oversized payloads with a protocol error.
+pub fn response_frame(reply: &Reply) -> Vec<u8> {
     let mut bytes = reply.encode();
     if bytes.len() > MAX_MESSAGE_BYTES {
         bytes = Reply::Error("reply too large".into()).encode();
@@ -286,9 +279,7 @@ pub fn respond(stream: &mut UnixStream, reply: &Reply) {
     let mut frame = Vec::with_capacity(4 + bytes.len());
     frame.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
     frame.extend_from_slice(&bytes);
-    if let Err(e) = stream.write_all(&frame) {
-        log::warn(format_args!("control: reply failed: {e}"));
-    }
+    frame
 }
 
 #[cfg(test)]
@@ -307,11 +298,7 @@ mod reply_size_tests {
         ] {
             let reply = Reply::Error("x".repeat(size - overhead));
             assert_eq!(reply.encode().len(), size);
-            let (mut server, mut peer) = UnixStream::pair().unwrap();
-            respond(&mut server, &reply);
-            drop(server);
-            let mut frame = Vec::new();
-            peer.read_to_end(&mut frame).unwrap();
+            let frame = response_frame(&reply);
             let len = u32::from_le_bytes(frame[..4].try_into().unwrap()) as usize;
             assert_eq!(len, frame.len() - 4);
             assert!(len <= MAX_MESSAGE_BYTES, "wrote {len} payload bytes");
