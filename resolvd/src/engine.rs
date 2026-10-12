@@ -113,6 +113,20 @@ fn same_subnet(a: IpAddr, prefix: u8, b: IpAddr) -> bool {
     }
 }
 
+// A link-local address denotes a different server on every interface. Global
+// servers retain their existing cross-scope health history.
+fn server_key(server: IpAddr, scope: &str) -> (IpAddr, String) {
+    let local = matches!(server, IpAddr::V6(ip) if ip.is_unicast_link_local());
+    (
+        server,
+        if local {
+            scope.to_owned()
+        } else {
+            String::new()
+        },
+    )
+}
+
 pub const FALLBACK_SCOPE: &str = "fallback";
 
 /// An answer, in the engine's terms.
@@ -172,6 +186,7 @@ pub enum Action {
     Send {
         tx: Txid,
         server: IpAddr,
+        interface: Option<String>,
         tcp: bool,
         payload: Vec<u8>,
     },
@@ -257,7 +272,7 @@ pub struct Engine {
     hostname: Option<Name>,
     hosts: HashMap<Name, Vec<IpAddr>>,
     cache: Cache,
-    demoted: HashMap<IpAddr, Instant>,
+    demoted: HashMap<(IpAddr, String), Instant>,
     tasks: HashMap<TaskId, Task>,
     txs: HashMap<Txid, Tx>,
     lookups: HashMap<Qid, Lookup>,
@@ -377,7 +392,7 @@ impl Engine {
         self.demoted
             .iter()
             .filter(|(_, until)| **until > now)
-            .map(|(s, _)| *s)
+            .map(|((s, _), _)| *s)
             .collect()
     }
 
@@ -547,7 +562,10 @@ impl Engine {
         let code = message.rcode();
         match code as u8 {
             rcode::NOERROR | rcode::NXDOMAIN if code < 16 => {
-                self.demoted.remove(&server);
+                self.demoted.remove(&server_key(
+                    server,
+                    task.scope.as_deref().unwrap_or_default(),
+                ));
                 let candidate = task
                     .current
                     .clone()
@@ -628,7 +646,8 @@ impl Engine {
                 // SERVFAIL, REFUSED, FORMERR, an extended code: this server
                 // cannot answer this; try the next.
                 self.counters.upstream_failed += 1;
-                self.demote(server, now);
+                let scope = task.scope.clone().unwrap_or_default();
+                self.demote(server, &scope, now);
                 self.next_attempt(task_id, now)
             }
         }
@@ -640,7 +659,13 @@ impl Engine {
             return Vec::new();
         };
         self.counters.upstream_failed += 1;
-        self.demote(t.server, now);
+        let scope = self
+            .tasks
+            .get(&t.task)
+            .and_then(|task| task.scope.as_deref())
+            .unwrap_or_default()
+            .to_owned();
+        self.demote(t.server, &scope, now);
         if let Some(task) = self.tasks.get_mut(&t.task) {
             task.tx = None;
         }
@@ -692,12 +717,15 @@ impl Engine {
             .map(|s| s.interface.clone())
     }
 
-    fn demote(&mut self, server: IpAddr, now: Instant) {
-        self.demoted.insert(server, now + DEMOTION);
+    fn demote(&mut self, server: IpAddr, scope: &str, now: Instant) {
+        self.demoted
+            .insert(server_key(server, scope), now + DEMOTION);
     }
 
-    fn is_demoted(&self, server: IpAddr, now: Instant) -> bool {
-        self.demoted.get(&server).is_some_and(|until| *until > now)
+    pub fn is_demoted(&self, server: IpAddr, scope: &str, now: Instant) -> bool {
+        self.demoted
+            .get(&server_key(server, scope))
+            .is_some_and(|until| *until > now)
     }
 
     fn start_task(&mut self, owner: Owner, name: Name, rtype: u16, no_cache: bool) -> TaskId {
@@ -890,6 +918,10 @@ impl Engine {
             .clone()
             .unwrap_or_else(|| task.original.clone());
         let rtype = task.rtype;
+        let interface = task
+            .scope
+            .as_deref()
+            .and_then(|scope| self.interface_of(scope));
         // Two ID bytes and 256 independent case bits cover every letter in
         // a DNS name (whose complete wire form is at most 255 bytes).
         let mut random = [0u8; 34];
@@ -934,6 +966,7 @@ impl Engine {
         vec![Action::Send {
             tx,
             server,
+            interface,
             tcp,
             payload,
         }]
@@ -1045,8 +1078,9 @@ impl Engine {
                 .map(|s| s.servers.clone())
                 .unwrap_or_default()
         };
-        let (healthy, demoted): (Vec<IpAddr>, Vec<IpAddr>) =
-            servers.into_iter().partition(|s| !self.is_demoted(*s, now));
+        let (healthy, demoted): (Vec<IpAddr>, Vec<IpAddr>) = servers
+            .into_iter()
+            .partition(|s| !self.is_demoted(*s, scope, now));
         healthy.into_iter().chain(demoted).collect()
     }
 
@@ -1741,14 +1775,16 @@ mod tests {
             out[3] = 0b0000_0010;
             Ok(())
         });
-        let (_, _, query) = sent(&e.resolve(
-            1, "a1b-c.d2ef3gh-i4jk.", rtype::A, false, Instant::now(),
-        ));
+        let (_, _, query) =
+            sent(&e.resolve(1, "a1b-c.d2ef3gh-i4jk.", rtype::A, false, Instant::now()));
         assert_eq!(query.header.id, 0x1234);
         // Bits 0, 2, 7 and 9 uppercase a, c, h and j. Digits, hyphens,
         // label lengths and separators consume no bits, including at the
         // byte boundary between h and i.
-        assert_eq!(query.questions[0].name.labels(), n("A1b-C.d2ef3gH-i4Jk.").labels());
+        assert_eq!(
+            query.questions[0].name.labels(),
+            n("A1b-C.d2ef3gH-i4Jk.").labels()
+        );
     }
 
     #[test]
@@ -3158,5 +3194,31 @@ mod tests {
         }
         assert_eq!(e.in_flight(), 0);
         assert_eq!(e.cache_entries(), 0);
+    }
+    #[test]
+    fn link_local_sends_carry_the_interface_and_health_is_per_scope() {
+        let mut e = Engine::new(1);
+        e.set_scopes(vec![
+            scope("lan", &["fe80::53", "fe80::54"], &["lan"], true),
+            scope("vpn", &["fe80::53", "fe80::54"], &["vpn"], false),
+        ]);
+        let now = Instant::now();
+        let actions = e.resolve(1, "host.lan", rtype::A, false, now);
+        let (tx, _, _) = sent(&actions);
+        assert!(matches!(&actions[0], Action::Send { interface: Some(name), .. } if name == "lan"));
+        e.failed(tx, now);
+        let ll: IpAddr = "fe80::53".parse().unwrap();
+        assert!(e.is_demoted(ll, "lan", now));
+        assert!(!e.is_demoted(ll, "vpn", now));
+        let actions = e.resolve(2, "host.vpn", rtype::A, false, now);
+        let (tx, server, mut reply) = sent(&actions);
+        assert_eq!(server, ll);
+        assert!(matches!(&actions[0], Action::Send { interface: Some(name), .. } if name == "vpn"));
+        reply.header.response = true;
+        reply.header.truncated = true;
+        let actions = e.received(tx, &reply.encode().unwrap(), now);
+        assert!(
+            matches!(&actions[0], Action::Send { interface: Some(name), tcp: true, .. } if name == "vpn")
+        );
     }
 }
