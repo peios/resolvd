@@ -152,11 +152,12 @@ impl Stub {
     pub fn service_client(&mut self, id: u64) -> Option<Incoming> {
         let c = self.clients.get_mut(&id)?;
         let mut chunk = [0u8; 4096];
+        let mut eof = false;
         loop {
             match c.stream.read(&mut chunk) {
                 Ok(0) => {
-                    self.clients.remove(&id);
-                    return Some(Incoming::Nothing);
+                    eof = true;
+                    break;
                 }
                 Ok(n) => {
                     c.buf.extend_from_slice(&chunk[..n]);
@@ -174,10 +175,18 @@ impl Stub {
             }
         }
         if c.buf.len() < 2 {
+            if eof {
+                self.clients.remove(&id);
+                return Some(Incoming::Nothing);
+            }
             return None;
         }
         let len = u16::from_be_bytes([c.buf[0], c.buf[1]]) as usize;
         if c.buf.len() < 2 + len {
+            if eof {
+                self.clients.remove(&id);
+                return Some(Incoming::Nothing);
+            }
             return None;
         }
         let client = self.clients.remove(&id)?;
@@ -359,6 +368,63 @@ mod tests {
         assert!(r.opt().is_some());
         let bytes = r.encode().unwrap();
         Message::decode(&bytes).unwrap();
+    }
+
+    #[test]
+    fn half_closed_tcp_preserves_complete_queries_and_drops_partial_frames() {
+        use std::io::Write;
+        use std::net::Shutdown;
+        let query = Message::query(
+            41,
+            Question::new(Name::parse("localhost").unwrap(), rtype::A),
+        );
+        let payload = query.encode().unwrap();
+        let mut frame = (payload.len() as u16).to_be_bytes().to_vec();
+        frame.extend_from_slice(&payload);
+        for end in [0, 1, frame.len() - 1, frame.len()] {
+            let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+            let mut peer = TcpStream::connect(tcp.local_addr().unwrap()).unwrap();
+            let (stream, _) = tcp.accept().unwrap();
+            stream.set_nonblocking(true).unwrap();
+            peer.write_all(&frame[..end]).unwrap();
+            peer.shutdown(Shutdown::Write).unwrap();
+            let mut stub = Stub {
+                udp: UdpSocket::bind("127.0.0.1:0").unwrap(),
+                tcp,
+                clients: HashMap::from([(
+                    1,
+                    TcpClient {
+                        stream,
+                        buf: Vec::new(),
+                        since: Instant::now(),
+                    },
+                )]),
+                next_client: 2,
+                replies: Replies::default(),
+                accept_backoff: AcceptBackoff::default(),
+            };
+            let incoming = stub.service_client(1);
+            assert!(stub.clients.is_empty());
+            if end == frame.len() {
+                let Some(Incoming::Query { origin }) = incoming else {
+                    panic!("complete query discarded")
+                };
+                stub.answer(
+                    origin,
+                    &Answer {
+                        outcome: Outcome::NotFound,
+                        ..Default::default()
+                    },
+                );
+                let mut bytes = Vec::new();
+                peer.read_to_end(&mut bytes).unwrap();
+                let reply = Message::decode(&bytes[2..]).unwrap();
+                assert_eq!(reply.header.id, 41);
+                assert_eq!(reply.header.rcode, rcode::NXDOMAIN);
+            } else {
+                assert!(matches!(incoming, Some(Incoming::Nothing)));
+            }
+        }
     }
 
     #[test]
