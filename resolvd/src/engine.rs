@@ -1110,19 +1110,23 @@ fn combine(lookup: Lookup) -> Addresses {
     };
     let mut any_found = false;
     let mut any_unavailable = false;
-    let mut source = Source::Local;
+    let mut metadata_rank = None;
     for (rtype, answer) in &lookup.results {
         match answer.outcome {
             Outcome::Found => {
                 any_found = true;
-                source = answer.source;
                 let start = answer
                     .resolved_name
                     .clone()
                     .unwrap_or_else(|| lookup.name.clone());
                 let (canonical, addrs) = chase(&answer.records, &start, *rtype);
-                if !addrs.is_empty() {
+                // Prefer an address-producing family, then A over AAAA, for
+                // both metadata fields. Arrival order still orders addresses.
+                let rank = (addrs.is_empty(), *rtype);
+                if metadata_rank.is_none_or(|best| rank < best) {
                     out.canonical = canonical;
+                    out.source = answer.source;
+                    metadata_rank = Some(rank);
                 }
                 out.addresses.extend(addrs);
             }
@@ -1137,7 +1141,6 @@ fn combine(lookup: Lookup) -> Addresses {
     } else {
         Outcome::NotFound
     };
-    out.source = source;
     out
 }
 
@@ -1231,6 +1234,114 @@ mod tests {
         m.header.rcode = code;
         m.answers = records;
         m.encode().unwrap()
+    }
+
+    #[test]
+    fn empty_lookup_keeps_expansion_and_cname_target() {
+        for records in [
+            vec![],
+            vec![Record::new(
+                n("printer.lan"),
+                30,
+                RData::Cname(n("target.lan")),
+            )],
+        ] {
+            let expected = if records.is_empty() {
+                n("printer.lan")
+            } else {
+                n("target.lan")
+            };
+            let out = combine(Lookup {
+                name: n("printer"),
+                pending: vec![],
+                results: vec![(
+                    rtype::AAAA,
+                    Answer {
+                        outcome: Outcome::Found,
+                        records,
+                        source: Source::Dns,
+                        resolved_name: Some(n("printer.lan")),
+                        ..Default::default()
+                    },
+                )],
+            });
+            assert_eq!(out.canonical, expected);
+            assert_eq!(out.source, Source::Dns);
+            assert_eq!(out.outcome, Outcome::Found);
+            assert!(out.addresses.is_empty());
+        }
+    }
+
+    #[test]
+    fn lookup_metadata_prefers_addresses_then_a_in_either_completion_order() {
+        for a_has_addresses in [false, true] {
+            for aaaa_has_addresses in [false, true] {
+                for reverse in [false, true] {
+                    let mut results = vec![
+                        (
+                            rtype::A,
+                            Answer {
+                                outcome: Outcome::Found,
+                                source: Source::Cache,
+                                resolved_name: Some(n("a.lan")),
+                                records: if a_has_addresses {
+                                    vec![Record::new(
+                                        n("a.lan"),
+                                        11,
+                                        RData::A("10.0.2.9".parse().unwrap()),
+                                    )]
+                                } else {
+                                    vec![]
+                                },
+                                ..Default::default()
+                            },
+                        ),
+                        (
+                            rtype::AAAA,
+                            Answer {
+                                outcome: Outcome::Found,
+                                source: Source::Dns,
+                                resolved_name: Some(n("aaaa.lan")),
+                                records: if aaaa_has_addresses {
+                                    vec![Record::new(
+                                        n("aaaa.lan"),
+                                        22,
+                                        RData::Aaaa("fd00::9".parse().unwrap()),
+                                    )]
+                                } else {
+                                    vec![]
+                                },
+                                ..Default::default()
+                            },
+                        ),
+                    ];
+                    if reverse {
+                        results.reverse();
+                    }
+                    let out = combine(Lookup {
+                        name: n("printer"),
+                        pending: vec![],
+                        results,
+                    });
+                    let prefer_a = a_has_addresses || !aaaa_has_addresses;
+                    assert_eq!(
+                        out.canonical,
+                        n(if prefer_a { "a.lan" } else { "aaaa.lan" })
+                    );
+                    assert_eq!(
+                        out.source,
+                        if prefer_a { Source::Cache } else { Source::Dns }
+                    );
+                    assert_eq!(
+                        out.addresses.len(),
+                        usize::from(a_has_addresses) + usize::from(aaaa_has_addresses)
+                    );
+                    if a_has_addresses && aaaa_has_addresses {
+                        assert_eq!(out.addresses[0].1, if reverse { 22 } else { 11 });
+                    }
+                }
+            }
+        }
     }
 
     #[test]
