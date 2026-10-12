@@ -258,8 +258,11 @@ pub fn parse_query(bytes: &[u8]) -> Result<Message, Option<Vec<u8>>> {
     if message.header.opcode != 0 {
         return error(rcode::NOTIMP);
     }
-    if message.question().is_none() {
+    let Some(question) = message.question() else {
         return error(rcode::FORMERR);
+    };
+    if question.class != dns::class::IN {
+        return error(rcode::NOTIMP);
     }
     Ok(message)
 }
@@ -382,5 +385,26 @@ mod tests {
             Message::decode(&reply).unwrap().header.rcode,
             rcode::FORMERR
         );
+    }
+
+    #[test]
+    fn unsupported_classes_are_notimp_with_the_original_question() {
+        for class in [0, 3, 4, 255, u16::MAX] {
+            let mut q = Message::query(
+                7,
+                Question::new(Name::parse("localhost").unwrap(), rtype::A),
+            );
+            q.questions[0].class = class;
+            let raw = parse_query(&q.encode().unwrap()).err().flatten().unwrap();
+            let reply = Message::decode(&raw).unwrap();
+            assert_eq!(reply.header.rcode, rcode::NOTIMP);
+            assert_eq!(reply.questions, q.questions);
+            assert!(reply.answers.is_empty());
+        }
+        let q = Message::query(
+            7,
+            Question::new(Name::parse("localhost").unwrap(), rtype::A),
+        );
+        assert!(parse_query(&q.encode().unwrap()).is_ok());
     }
 }
