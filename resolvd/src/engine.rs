@@ -538,14 +538,21 @@ impl Engine {
                 } else {
                     Outcome::Found
                 };
+                let (relevant, effective_name) =
+                    relevant_records(message.answers, &candidate, task.rtype);
+                let alias_ttl = relevant
+                    .iter()
+                    .filter(|r| r.rtype == rtype::CNAME)
+                    .map(|r| r.ttl)
+                    .min()
+                    .unwrap_or(u32::MAX);
                 // Records come back in the case we sent (0x20); give them
                 // the case the caller used. A negative answer carries none:
                 // records riding on an NXDOMAIN are a server's mistake or a
                 // forger's payload, and neither is an answer.
-                let records: Vec<Record> = message
-                    .answers
+                let records: Vec<Record> = relevant
                     .into_iter()
-                    .filter(|r| r.class == dns::class::IN && outcome == Outcome::Found)
+                    .filter(|_| outcome == Outcome::Found)
                     .map(|mut r| {
                         if r.name == candidate {
                             r.name = candidate.clone();
@@ -561,7 +568,7 @@ impl Engine {
                         .unwrap_or(0)
                         .min(MAX_POSITIVE_TTL)
                 } else {
-                    negative_ttl(&message.authority)
+                    negative_ttl(&message.authority, &effective_name).min(alias_ttl)
                 };
                 let entry = Entry {
                     outcome,
@@ -1142,15 +1149,58 @@ fn same_case(a: &Name, b: &Name) -> bool {
 
 /// RFC 2308: the negative TTL is the SOA's minimum field, bounded by its own
 /// TTL and our cap.
-fn negative_ttl(authority: &[Record]) -> u32 {
+fn negative_ttl(authority: &[Record], name: &Name) -> u32 {
     authority
         .iter()
+        .filter(|r| r.class == dns::class::IN && name.ends_with(&r.name))
         .find_map(|r| match &r.rdata {
             RData::Soa { minimum, .. } => Some((*minimum).min(r.ttl)),
             _ => None,
         })
         .unwrap_or(0)
         .min(MAX_NEGATIVE_TTL)
+}
+
+/// Keep the requested RRset and its CNAME path, in the server's record order.
+/// ANY and explicit CNAME questions stop at the queried owner. Other types
+/// follow at most the same sixteen aliases as lookup's address chase.
+fn relevant_records(records: Vec<Record>, candidate: &Name, qtype: u16) -> (Vec<Record>, Name) {
+    let mut keep = vec![false; records.len()];
+    let mut name = candidate.clone();
+    let mut seen = Vec::new();
+    for depth in 0..=16 {
+        let mut terminal = false;
+        for (index, record) in records.iter().enumerate() {
+            if record.class == dns::class::IN
+                && record.name == name
+                && (record.rtype == qtype || qtype == rtype::ANY)
+            {
+                keep[index] = true;
+                terminal = true;
+            }
+        }
+        if terminal || depth == 16 || seen.contains(&name) {
+            break;
+        }
+        seen.push(name.clone());
+        let next = records.iter().enumerate().find_map(|(index, record)| {
+            if record.class == dns::class::IN && record.name == name {
+                if let RData::Cname(target) = &record.rdata {
+                    return Some((index, target.clone()));
+                }
+            }
+            None
+        });
+        let Some((index, target)) = next else { break };
+        keep[index] = true;
+        name = target;
+    }
+    let records = records
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(record, keep)| keep.then_some(record))
+        .collect();
+    (records, name)
 }
 
 /// Fold a lookup's per-type answers into addresses plus a canonical name.
@@ -1436,6 +1486,154 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn unrelated_zero_ttl_records_do_not_escape_or_prevent_caching() {
+        let mut e = engine();
+        let now = Instant::now();
+        let (tx, _, q) = sent(&e.resolve(1, "wanted.example", rtype::A, false, now));
+        let good = Record::new(
+            n("wanted.example"),
+            60,
+            RData::A("10.0.2.9".parse().unwrap()),
+        );
+        let bytes = reply(
+            &q,
+            vec![
+                Record::new(
+                    n("elsewhere.example"),
+                    0,
+                    RData::A("10.0.2.99".parse().unwrap()),
+                ),
+                good.clone(),
+                Record::new(
+                    n("wanted.example"),
+                    0,
+                    RData::Aaaa("fd00::99".parse().unwrap()),
+                ),
+            ],
+            rcode::NOERROR,
+        );
+        let answer = done(&e.received(tx, &bytes, now));
+        assert_eq!(answer.records, vec![good]);
+        let cached = done(&e.resolve(
+            2,
+            "wanted.example",
+            rtype::A,
+            false,
+            now + Duration::from_secs(1),
+        ));
+        assert_eq!(cached.source, Source::Cache);
+        assert_eq!(cached.records.len(), 1);
+        assert_eq!(cached.records[0].ttl, 59);
+    }
+
+    #[test]
+    fn relevant_chain_preserves_server_order_and_stops_explicit_cname_and_any() {
+        let alias = Record::new(n("alias.example"), 30, RData::Cname(n("target.example")));
+        let target = Record::new(
+            n("target.example"),
+            60,
+            RData::A("10.0.2.9".parse().unwrap()),
+        );
+        let other = Record::new(
+            n("elsewhere.example"),
+            0,
+            RData::A("10.0.2.99".parse().unwrap()),
+        );
+        let mut wrong_class = alias.clone();
+        wrong_class.class = 3;
+        let records = vec![target.clone(), other, wrong_class, alias.clone()];
+        let (kept, end) = relevant_records(records.clone(), &n("alias.example"), rtype::A);
+        assert_eq!(kept, vec![target, alias.clone()]);
+        assert_eq!(end, n("target.example"));
+        for qtype in [rtype::CNAME, rtype::ANY] {
+            let (kept, end) = relevant_records(records.clone(), &n("alias.example"), qtype);
+            assert_eq!(kept, vec![alias.clone()]);
+            assert_eq!(end, n("alias.example"));
+        }
+    }
+
+    #[test]
+    fn relevant_chain_is_bounded_and_does_not_revisit_aliases() {
+        let records: Vec<_> = (0..20)
+            .map(|i| {
+                Record::new(
+                    n(&format!("n{i}.example")),
+                    60,
+                    RData::Cname(n(&format!("n{}.example", i + 1))),
+                )
+            })
+            .collect();
+        let (kept, end) = relevant_records(records, &n("n0.example"), rtype::A);
+        assert_eq!(kept.len(), 16);
+        assert_eq!(end, n("n16.example"));
+        let records = vec![
+            Record::new(n("a.example"), 60, RData::Cname(n("b.example"))),
+            Record::new(n("b.example"), 60, RData::Cname(n("a.example"))),
+        ];
+        let (kept, end) = relevant_records(records.clone(), &n("a.example"), rtype::A);
+        assert_eq!(kept, records);
+        assert_eq!(end, n("a.example"));
+    }
+
+    #[test]
+    fn negative_soa_must_have_the_right_class_and_enclose_the_effective_name() {
+        let soa = |owner: &str, ttl| {
+            Record::new(
+                n(owner),
+                ttl,
+                RData::Soa {
+                    mname: n("ns.example"),
+                    rname: n("hostmaster.example"),
+                    serial: 1,
+                    refresh: 1,
+                    retry: 1,
+                    expire: 1,
+                    minimum: 60,
+                },
+            )
+        };
+        let mut wrong_class = soa("example", 0);
+        wrong_class.class = 3;
+        let records = vec![soa("other.example", 0), wrong_class, soa("example", 30)];
+        assert_eq!(negative_ttl(&records, &n("host.example")), 30);
+        assert_eq!(negative_ttl(&records, &n("host.notexample")), 0);
+        assert_eq!(negative_ttl(&[soa(".", 30)], &n("anywhere")), 30);
+
+        let mut e = engine();
+        let now = Instant::now();
+        let (tx, _, query) = sent(&e.resolve(1, "alias.example", rtype::A, false, now));
+        let mut response = Message::reply_to(&query);
+        response.header.rcode = rcode::NXDOMAIN;
+        response.answers.push(Record::new(
+            n("alias.example"),
+            10,
+            RData::Cname(n("missing.other")),
+        ));
+        response.authority.push(soa("other", 30));
+        let answer = done(&e.received(tx, &response.encode().unwrap(), now));
+        assert_eq!(answer.outcome, Outcome::NotFound);
+        assert!(answer.records.is_empty());
+        assert_eq!(
+            done(&e.resolve(
+                2,
+                "alias.example",
+                rtype::A,
+                false,
+                now + Duration::from_secs(9)
+            ))
+            .source,
+            Source::Cache
+        );
+        sent(&e.resolve(
+            3,
+            "alias.example",
+            rtype::A,
+            false,
+            now + Duration::from_secs(10),
+        ));
     }
 
     #[test]
