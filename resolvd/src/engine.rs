@@ -490,7 +490,6 @@ impl Engine {
     }
 
     /// Forget a question whose asker went away.
-    #[cfg(test)]
     pub fn abandon(&mut self, qid: Qid) -> Vec<Action> {
         let mut actions = Vec::new();
         let ids: Vec<TaskId> = self
@@ -872,17 +871,6 @@ impl Engine {
                 now,
             );
         }
-        if attempt == 0 && self.txs.len() >= MAX_IN_FLIGHT {
-            self.counters.refused += 1;
-            return self.settle(
-                id,
-                Answer {
-                    outcome: Outcome::Unavailable,
-                    ..Default::default()
-                },
-                now,
-            );
-        }
         // A server not yet asked, healthiest first; else round-robin.
         let server = servers
             .iter()
@@ -908,6 +896,19 @@ impl Engine {
                 Answer {
                     outcome: Outcome::Unavailable,
                     interface: self.interface_of(&scope),
+                    ..Default::default()
+                },
+                now,
+            );
+        }
+        // Every allocation of a transaction goes through this point,
+        // including TCP truncation retries and later search candidates.
+        if self.txs.len() >= MAX_IN_FLIGHT {
+            self.counters.refused += 1;
+            return self.settle(
+                id,
+                Answer {
+                    outcome: Outcome::Unavailable,
                     ..Default::default()
                 },
                 now,
@@ -2699,6 +2700,38 @@ mod tests {
     }
 
     #[test]
+    fn abandon_lookup_cancels_both_families_without_touching_other_askers() {
+        let mut e = engine();
+        let now = Instant::now();
+        let queries = e.lookup(1, "gone.example.com", Family::Any, now);
+        let (other, _, _) = sent(&e.resolve(2, "stay.example.com", rtype::A, false, now));
+        assert_eq!(e.in_flight(), 3);
+        let cancelled = e.abandon(1);
+        assert_eq!(cancelled.len(), 2);
+        for action in queries {
+            let Action::Send { tx, payload, .. } = action else {
+                panic!("expected query")
+            };
+            assert!(cancelled.contains(&Action::Cancel { tx }));
+            let query = Message::decode(&payload).unwrap();
+            assert!(e.received(tx, &reply(&query, vec![], 0), now).is_empty());
+        }
+        assert_eq!(e.in_flight(), 1);
+        assert_eq!(e.tasks.len(), 1);
+        assert!(e.lookups.is_empty());
+        assert!(e.abandon(1).is_empty());
+        let retried = e.tick(now + SERVER_TIMEOUT);
+        assert!(retried.contains(&Action::Cancel { tx: other }));
+        assert_eq!(
+            retried
+                .iter()
+                .filter(|a| matches!(a, Action::Send { .. }))
+                .count(),
+            1
+        );
+    }
+
+    #[test]
     fn a_reply_with_the_wrong_question_or_a_dead_transaction_is_ignored() {
         let mut e = engine();
         let now = Instant::now();
@@ -2753,6 +2786,58 @@ mod tests {
         // Timeouts drain it.
         let actions = e.tick(now + SERVER_TIMEOUT * 4);
         assert!(actions.len() >= MAX_IN_FLIGHT);
+    }
+
+    #[test]
+    fn every_send_checks_capacity_but_replacing_a_transaction_can_reuse_its_slot() {
+        let mut e = engine();
+        let now = Instant::now();
+        let mut first = None;
+        for i in 0..MAX_IN_FLIGHT as u64 {
+            let query = sent(&e.resolve(i, &format!("h{i}.example.com"), rtype::A, false, now));
+            first.get_or_insert(query);
+        }
+        let (tx, server, mut query) = first.unwrap();
+        // A truncated response releases its UDP transaction before asking
+        // over TCP, so a full table must still permit that replacement.
+        query.header.response = true;
+        query.header.truncated = true;
+        let retry = e.received(tx, &query.encode().unwrap(), now);
+        assert!(matches!(retry.as_slice(), [Action::Send { tcp: true, .. }]));
+        assert_eq!(e.in_flight(), MAX_IN_FLIGHT);
+        assert_eq!(e.counters.refused, 0);
+
+        // Exercise the allocation boundary directly with an already-started
+        // task whose old transaction has ended. Neither the ordinary retry
+        // path nor the direct TCP path may allocate over the ceiling.
+        for tcp in [false, true] {
+            let id = e.start_task(
+                Owner::Resolve(u64::MAX),
+                n("waiting.example.com"),
+                rtype::A,
+                false,
+            );
+            e.tasks.get_mut(&id).unwrap().attempt = 1;
+            e.tasks.get_mut(&id).unwrap().scope = Some("lan".into());
+            let actions = if tcp {
+                e.send(id, server, true, now)
+            } else {
+                e.next_attempt(id, now)
+            };
+            assert_eq!(done(&actions).outcome, Outcome::Unavailable);
+            assert_eq!(e.in_flight(), MAX_IN_FLIGHT);
+        }
+        assert_eq!(e.counters.refused, 2);
+        let actions = e.tick(now + SERVER_TIMEOUT);
+        assert_eq!(
+            actions
+                .iter()
+                .filter(|a| matches!(a, Action::Send { .. }))
+                .count(),
+            MAX_IN_FLIGHT
+        );
+        assert_eq!(e.in_flight(), MAX_IN_FLIGHT);
+        assert_eq!(e.counters.refused, 2);
     }
 
     #[test]
