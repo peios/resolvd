@@ -15,8 +15,8 @@ mod upstream;
 use resolvd::{accept_backoff, engine, log, reply_queue::Replies, stub};
 
 use std::collections::HashMap;
-use std::net::IpAddr;
-use std::os::fd::AsRawFd;
+use std::net::{IpAddr, SocketAddr};
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixDatagram, UnixStream};
 use std::process::ExitCode;
 use std::time::Instant;
@@ -32,16 +32,38 @@ use peios::registry::Key;
 use engine::{Action, Completion, Engine, Qid, Scope};
 use stub::{Incoming, Origin};
 
-/// Connections still delivering a request, and stub TCP clients, are
-/// bounded so a local flood exhausts a counter rather than descriptors.
-/// Beyond it, accepts are dropped until one drains; the engine's own
-/// in-flight ceiling bounds the upstream sockets.
+/// Each stream door counts both readers and questions awaiting resolution.
+/// Reply writers retain their separate bounded queue and write deadline.
 const MAX_PENDING_CLIENTS: usize = 256;
+const MAX_PENDING_UDP: usize = 256;
+const MAX_PENDING_UDP_PER_PEER: usize = 16;
 
 /// Who is waiting for `qid`.
 enum Waiter {
     Native(UnixStream),
     Stub(Origin),
+}
+
+impl Waiter {
+    fn stream_fd(&self) -> Option<RawFd> {
+        match self {
+            Self::Native(stream) => Some(stream.as_raw_fd()),
+            Self::Stub(Origin::Tcp { stream, .. }) => Some(stream.as_raw_fd()),
+            Self::Stub(Origin::Udp { .. }) => None,
+        }
+    }
+}
+
+fn udp_has_capacity(waiters: &HashMap<Qid, Waiter>, peer: SocketAddr) -> bool {
+    let mut total = 0;
+    let mut same_peer = 0;
+    for waiter in waiters.values() {
+        if let Waiter::Stub(Origin::Udp { peer: pending, .. }) = waiter {
+            total += 1;
+            same_peer += usize::from(*pending == peer);
+        }
+    }
+    total < MAX_PENDING_UDP && same_peer < MAX_PENDING_UDP_PER_PEER
 }
 
 struct Resolvd {
@@ -208,6 +230,20 @@ impl Resolvd {
                 Origin::Udp { query, .. } | Origin::Tcp { query, .. } => query.question().cloned(),
             };
             let Some(question) = question else { continue };
+            if let Origin::Udp { peer, .. } = &origin
+                && !udp_has_capacity(&self.waiters, *peer)
+            {
+                self.engine.counters.queries += 1;
+                self.engine.counters.refused += 1;
+                self.stub.answer(
+                    origin,
+                    &engine::Answer {
+                        outcome: libresolv::Outcome::Unavailable,
+                        ..Default::default()
+                    },
+                );
+                continue;
+            }
             let qid = self.fresh_id();
             self.waiters.insert(qid, Waiter::Stub(origin));
             let actions = self.engine.resolve_question(qid, &question, now);
@@ -487,6 +523,14 @@ fn main() -> ExitCode {
         let stub_reply_slots: Vec<_> = r.stub.reply_fds().into_iter()
             .map(|(id, fd)| (id, push(&mut fds, fd, libc::POLLOUT)))
             .collect();
+        // Only unambiguous hangup/error is actionable. In particular, do
+        // not request POLLIN/RDHUP: a supported write-half-close means the
+        // peer may still be waiting for its reply, and EOF would stay ready.
+        let waiter_slots: Vec<_> = r
+            .waiters
+            .iter()
+            .filter_map(|(&qid, waiter)| waiter.stream_fd().map(|fd| (qid, push(&mut fds, fd, 0))))
+            .collect();
         let upstream_slots: Vec<(u64, usize)> = r
             .upstream
             .fds()
@@ -506,7 +550,16 @@ fn main() -> ExitCode {
         }
         let now = Instant::now();
 
-        // Upstream first: answers waiting are answers owed.
+        for (qid, slot) in waiter_slots {
+            if fds[slot].revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0
+                && r.waiters.remove(&qid).is_some()
+            {
+                let actions = r.engine.abandon(qid);
+                r.perform(actions, now);
+            }
+        }
+
+        // Answers waiting are serviced before accepting more questions.
         for (tx, slot) in &upstream_slots {
             if fds[*slot].revents == 0 {
                 continue;
@@ -542,7 +595,13 @@ fn main() -> ExitCode {
             r.handle_stub(incoming, now);
         }
         if fds[2].revents != 0 {
-            r.stub.accept(now, MAX_PENDING_CLIENTS);
+            let pending = r
+                .waiters
+                .values()
+                .filter(|w| matches!(w, Waiter::Stub(Origin::Tcp { .. })))
+                .count();
+            r.stub
+                .accept(now, MAX_PENDING_CLIENTS.saturating_sub(pending));
         }
         for (id, slot) in &stub_slots {
             if fds[*slot].revents != 0
@@ -552,10 +611,15 @@ fn main() -> ExitCode {
             }
         }
         if fds[0].revents != 0 {
-            loop {
+            let pending = r
+                .waiters
+                .values()
+                .filter(|w| matches!(w, Waiter::Native(_)))
+                .count();
+            for _ in 0..stub::IO_BATCH_LIMIT {
                 match listener.accept() {
                     Ok((stream, _)) => {
-                        if r.clients.len() >= MAX_PENDING_CLIENTS {
+                        if r.clients.len() + pending >= MAX_PENDING_CLIENTS {
                             drop(stream);
                             continue;
                         }
@@ -628,5 +692,53 @@ fn main() -> ExitCode {
         }
         r.clients
             .retain(|_, c| now.duration_since(c.since) < control::CLIENT_TIMEOUT);
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use super::*;
+
+    fn udp(peer: SocketAddr) -> Waiter {
+        Waiter::Stub(Origin::Udp {
+            peer,
+            query: dns::Message::query(
+                1,
+                dns::Question::new(Name::parse("example.com").unwrap(), dns::rtype::A),
+            ),
+        })
+    }
+
+    #[test]
+    fn udp_endpoint_budget_releases_with_its_waiters_and_ignores_streams() {
+        let peer = "127.0.0.1:10000".parse().unwrap();
+        let other_port = "127.0.0.1:10001".parse().unwrap();
+        let other_address = "127.0.0.2:10000".parse().unwrap();
+        let mut waiters = HashMap::new();
+        let (stream, _client) = UnixStream::pair().unwrap();
+        waiters.insert(u64::MAX, Waiter::Native(stream));
+        for qid in 0..MAX_PENDING_UDP_PER_PEER as u64 {
+            assert!(udp_has_capacity(&waiters, peer));
+            waiters.insert(qid, udp(peer));
+        }
+        assert!(!udp_has_capacity(&waiters, peer));
+        assert!(udp_has_capacity(&waiters, other_port));
+        assert!(udp_has_capacity(&waiters, other_address));
+        waiters.remove(&0);
+        assert!(udp_has_capacity(&waiters, peer));
+    }
+
+    #[test]
+    fn changing_udp_source_ports_cannot_escape_the_aggregate_budget() {
+        let mut waiters = HashMap::new();
+        for qid in 0..MAX_PENDING_UDP as u64 {
+            let peer = SocketAddr::from(([127, 0, 0, 1], 10000 + qid as u16));
+            assert!(udp_has_capacity(&waiters, peer));
+            waiters.insert(qid, udp(peer));
+        }
+        let fresh = "127.0.0.1:20000".parse().unwrap();
+        assert!(!udp_has_capacity(&waiters, fresh));
+        waiters.remove(&0);
+        assert!(udp_has_capacity(&waiters, fresh));
     }
 }

@@ -25,6 +25,9 @@ use crate::reply_queue::Replies;
 /// A TCP client has this long to send a query. Reply writes have their own deadline.
 pub const TCP_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Yield to the other doors and timers even when a listener stays busy.
+pub const IO_BATCH_LIMIT: usize = 64;
+
 pub struct Stub {
     pub udp: UdpSocket,
     pub tcp: TcpListener,
@@ -73,11 +76,11 @@ impl Stub {
         })
     }
 
-    /// Read every datagram waiting.
+    /// Read a bounded batch of waiting datagrams.
     pub fn receive_udp(&mut self) -> Vec<Incoming> {
         let mut out = Vec::new();
         let mut buf = [0u8; 4096];
-        loop {
+        for _ in 0..IO_BATCH_LIMIT {
             match self.udp.recv_from(&mut buf) {
                 Ok((n, peer)) => {
                     // Only loopback may ask. The bind address enforces the
@@ -109,7 +112,7 @@ impl Stub {
     /// Accept waiting TCP clients, up to `limit` held at once; beyond it
     /// they are closed at once rather than queued.
     pub fn accept(&mut self, now: Instant, limit: usize) {
-        loop {
+        for _ in 0..IO_BATCH_LIMIT {
             match self.tcp.accept() {
                 Ok((stream, peer)) => {
                     if self.clients.len() >= limit
@@ -346,6 +349,60 @@ mod tests {
     use super::*;
     use dns::{Name, Question, rtype};
     use std::net::Ipv4Addr;
+
+    fn local_stub() -> Stub {
+        let udp = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let tcp = TcpListener::bind("127.0.0.1:0").unwrap();
+        udp.set_nonblocking(true).unwrap();
+        tcp.set_nonblocking(true).unwrap();
+        Stub {
+            udp,
+            tcp,
+            clients: HashMap::new(),
+            next_client: 1,
+            replies: Replies::default(),
+            accept_backoff: AcceptBackoff::default(),
+        }
+    }
+
+    #[test]
+    fn udp_batches_yield_even_when_the_first_batch_is_all_malformed() {
+        let mut stub = local_stub();
+        let peer = UdpSocket::bind("127.0.0.1:0").unwrap();
+        let address = stub.udp.local_addr().unwrap();
+        for _ in 0..IO_BATCH_LIMIT {
+            peer.send_to(&[], address).unwrap();
+        }
+        let query = Message::query(
+            42,
+            Question::new(Name::parse("localhost").unwrap(), rtype::A),
+        );
+        peer.send_to(&query.encode().unwrap(), address).unwrap();
+        assert!(stub.receive_udp().is_empty());
+        let incoming = stub.receive_udp();
+        assert!(matches!(incoming.as_slice(), [Incoming::Query { .. }]));
+    }
+
+    #[test]
+    fn tcp_accepts_yield_and_honor_the_remaining_reading_budget() {
+        let mut stub = local_stub();
+        let peers: Vec<_> = (0..=IO_BATCH_LIMIT)
+            .map(|_| TcpStream::connect(stub.tcp.local_addr().unwrap()).unwrap())
+            .collect();
+        let now = Instant::now();
+        stub.accept(now, IO_BATCH_LIMIT + 1);
+        assert_eq!(stub.clients.len(), IO_BATCH_LIMIT);
+        stub.accept(now, IO_BATCH_LIMIT + 1);
+        assert_eq!(stub.clients.len(), IO_BATCH_LIMIT + 1);
+        // The caller can reserve all slots for questions already resolving.
+        let mut excess = TcpStream::connect(stub.tcp.local_addr().unwrap()).unwrap();
+        excess
+            .set_read_timeout(Some(Duration::from_secs(1)))
+            .unwrap();
+        stub.accept(now, 0);
+        assert_eq!(excess.read(&mut [0]).unwrap(), 0);
+        assert_eq!(stub.clients.len(), peers.len());
+    }
 
     #[test]
     fn a_found_answer_becomes_noerror_with_records_and_a_cname_when_expanded() {
