@@ -7,8 +7,9 @@
 //! there costs a poll slot, not the loop.
 
 use std::collections::HashMap;
+use std::ffi::CString;
 use std::io::{self, Read, Write};
-use std::net::{IpAddr, SocketAddr, TcpStream, UdpSocket};
+use std::net::{IpAddr, SocketAddr, SocketAddrV6, TcpStream, UdpSocket};
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 
 use resolvd::engine::Txid;
@@ -26,12 +27,69 @@ pub fn is_local_failure(error: &io::Error) -> bool {
                 | libc::ENFILE
                 | libc::ENOMEM
                 | libc::ENOBUFS
+                | libc::ENODEV
                 | libc::EADDRNOTAVAIL
                 | libc::EADDRINUSE
                 | libc::EACCES
                 | libc::EPERM
         )
     )
+}
+
+/// Snapshot servers belong to their containing interface. An explicit zone
+/// must identify that same interface, rather than silently routing elsewhere.
+pub fn scope_server(text: &str, interface: &str) -> io::Result<IpAddr> {
+    let (address, zone) = text
+        .split_once('%')
+        .map_or((text, None), |(a, z)| (a, Some(z)));
+    let address: IpAddr = address
+        .parse()
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid IP address"))?;
+    if let Some(zone) = zone {
+        if !matches!(address, IpAddr::V6(ip) if ip.is_unicast_link_local()) || zone.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "zone requires a link-local IPv6 server",
+            ));
+        }
+        if zone != interface
+            && zone.parse::<u32>().ok().filter(|index| *index != 0)
+                != Some(interface_index(interface)?)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "zone differs from snapshot interface",
+            ));
+        }
+    }
+    Ok(address)
+}
+
+fn interface_index(interface: &str) -> io::Result<u32> {
+    let name = CString::new(interface)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid interface name"))?;
+    let index = unsafe { libc::if_nametoindex(name.as_ptr()) };
+    if index == 0 {
+        Err(io::Error::from_raw_os_error(libc::ENODEV))
+    } else {
+        Ok(index)
+    }
+}
+
+fn server_address(server: IpAddr, interface: Option<&str>) -> io::Result<SocketAddr> {
+    if let IpAddr::V6(ip) = server {
+        if ip.is_unicast_link_local() {
+            let interface =
+                interface.ok_or_else(|| io::Error::from_raw_os_error(libc::EADDRNOTAVAIL))?;
+            return Ok(SocketAddr::V6(SocketAddrV6::new(
+                ip,
+                DNS_PORT,
+                0,
+                interface_index(interface)?,
+            )));
+        }
+    }
+    Ok(SocketAddr::new(server, DNS_PORT))
 }
 
 enum TcpState {
@@ -67,10 +125,11 @@ impl Upstream {
         &mut self,
         tx: Txid,
         server: IpAddr,
+        interface: Option<&str>,
         tcp: bool,
         payload: Vec<u8>,
     ) -> Result<(), io::Error> {
-        let addr = SocketAddr::new(server, DNS_PORT);
+        let addr = server_address(server, interface)?;
         if tcp {
             let stream = connect_nonblocking(addr)?;
             let mut frame = Vec::with_capacity(2 + payload.len());
@@ -513,5 +572,45 @@ mod local_failure_tests {
         ] {
             assert!(!is_local_failure(&io::Error::from_raw_os_error(errno)));
         }
+    }
+}
+
+#[cfg(test)]
+mod scoped_server_tests {
+    use super::*;
+
+    #[test]
+    fn link_local_zones_match_the_snapshot_and_survive_address_construction() {
+        let index = interface_index("lo").unwrap();
+        let ip: IpAddr = "fe80::53".parse().unwrap();
+        for text in [
+            "fe80::53".to_owned(),
+            "fe80::53%lo".to_owned(),
+            format!("fe80::53%{index}"),
+        ] {
+            assert_eq!(scope_server(&text, "lo").unwrap(), ip);
+        }
+        for text in [
+            "fe80::53%",
+            "fe80::53%other",
+            "fe80::53%0",
+            "::1%lo",
+            "192.0.2.1%lo",
+        ] {
+            assert!(scope_server(text, "lo").is_err(), "{text}");
+        }
+        let SocketAddr::V6(address) = server_address(ip, Some("lo")).unwrap() else {
+            panic!()
+        };
+        assert_eq!(address.scope_id(), index);
+        assert_eq!(address.port(), 53);
+        assert!(is_local_failure(&server_address(ip, None).unwrap_err()));
+        assert!(is_local_failure(
+            &server_address(ip, Some("pei-missing")).unwrap_err()
+        ));
+        assert_eq!(
+            server_address("::1".parse().unwrap(), Some("pei-missing")).unwrap(),
+            "[::1]:53".parse().unwrap()
+        );
     }
 }
