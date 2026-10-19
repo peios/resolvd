@@ -202,7 +202,7 @@ fn many_addresses_can_be_retried_with_a_larger_buffer() {
         });
         // 128 addresses exceed 1024 bytes even with 32-bit pointers.
         answer.addresses = (1..=128)
-            .map(|i| libresolv::AddressOut {
+            .map(|i| resolvd_core::AddressOut {
                 address: if af == libc::AF_INET {
                     Ipv4Addr::new(192, 0, 2, i).into()
                 } else {

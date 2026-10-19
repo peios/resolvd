@@ -15,7 +15,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::time::{Duration, Instant};
 
 use dns::{Message, RData, Record, rcode};
-use libresolv::{Outcome, STUB_ADDRESS, STUB_PORT};
+use resolvd_core::{Outcome, STUB_ADDRESS, STUB_PORT};
 
 use crate::accept_backoff::AcceptBackoff;
 use crate::engine::Answer;
@@ -220,7 +220,9 @@ impl Stub {
     }
 
     pub fn next_deadline(&self, now: Instant) -> Option<Instant> {
-        self.clients.values().map(|c| c.since + TCP_TIMEOUT)
+        self.clients
+            .values()
+            .map(|c| c.since + TCP_TIMEOUT)
             .chain(self.replies.next_deadline())
             .chain(self.accept_backoff.deadline(now))
             .min()
@@ -312,7 +314,11 @@ pub fn build_reply(query: &Message, answer: &Answer) -> Message {
             if let (Some(q), Some(resolved)) = (&question, &answer.resolved_name)
                 && &q.name != resolved
             {
-                let ttl = answer.records.iter().map(|r| r.ttl).min()
+                let ttl = answer
+                    .records
+                    .iter()
+                    .map(|r| r.ttl)
+                    .min()
                     .unwrap_or(answer.negative_ttl);
                 reply.answers.push(Record::new(
                     q.name.clone(),

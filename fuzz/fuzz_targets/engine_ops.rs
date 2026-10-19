@@ -20,26 +20,57 @@ use std::time::{Duration, Instant};
 use dns::{Message, Name, RData, Record, rcode, rtype};
 use libfuzzer_sys::arbitrary::{self, Arbitrary};
 use libfuzzer_sys::fuzz_target;
-use libnetd::Level;
-use libresolv::Outcome;
+use netd_core::Level;
+use resolvd_core::Outcome;
 use resolvd::engine::{Action, Completion, Engine, Family, MAX_IN_FLIGHT, SERVER_TIMEOUT, Scope};
 
 #[derive(Arbitrary, Debug)]
 enum Op {
-    Resolve { name: u8, rtype: u8, no_cache: bool },
-    Lookup { name: u8, family: u8 },
-    Reverse { addr: u32 },
+    Resolve {
+        name: u8,
+        rtype: u8,
+        no_cache: bool,
+    },
+    Lookup {
+        name: u8,
+        family: u8,
+    },
+    Reverse {
+        addr: u32,
+    },
     /// Reply to the n-th open transaction with a plausible answer.
-    Answer { which: u8, code: u8, records: u8, truncated: bool, soa: bool, ttl: u32 },
+    Answer {
+        which: u8,
+        code: u8,
+        records: u8,
+        truncated: bool,
+        soa: bool,
+        ttl: u32,
+    },
     /// Reply with the bytes as they are.
-    Raw { which: u8, bytes: Vec<u8> },
+    Raw {
+        which: u8,
+        bytes: Vec<u8>,
+    },
     /// Reply with the right id but the wrong question.
-    Wrong { which: u8 },
-    Fail { which: u8 },
-    Tick { ms: u16 },
-    Scopes { variant: u8 },
-    Fallback { on: bool },
-    Hosts { on: bool },
+    Wrong {
+        which: u8,
+    },
+    Fail {
+        which: u8,
+    },
+    Tick {
+        ms: u16,
+    },
+    Scopes {
+        variant: u8,
+    },
+    Fallback {
+        on: bool,
+    },
+    Hosts {
+        on: bool,
+    },
     Flush,
 }
 
@@ -66,13 +97,29 @@ const NAMES: &[&str] = &[
     "loop.example.com",
 ];
 
-const TYPES: &[u16] = &[rtype::A, rtype::AAAA, rtype::PTR, rtype::CNAME, rtype::TXT, rtype::ANY, 65, rtype::SOA];
+const TYPES: &[u16] = &[
+    rtype::A,
+    rtype::AAAA,
+    rtype::PTR,
+    rtype::CNAME,
+    rtype::TXT,
+    rtype::ANY,
+    65,
+    rtype::SOA,
+];
 
 fn name(i: u8) -> &'static str {
     NAMES[i as usize % NAMES.len()]
 }
 
-fn scope(id: &str, servers: &[&str], domains: &[&str], default_route: bool, exclusive: bool, metric: u32) -> Scope {
+fn scope(
+    id: &str,
+    servers: &[&str],
+    domains: &[&str],
+    default_route: bool,
+    exclusive: bool,
+    metric: u32,
+) -> Scope {
     Scope {
         id: id.into(),
         interface: id.into(),
@@ -90,16 +137,31 @@ fn scopes(variant: u8) -> Vec<Scope> {
     match variant % 5 {
         0 => vec![],
         1 => vec![scope("lan", &["10.0.2.3"], &["lan"], true, false, 100)],
-        2 => vec![scope("lan", &["10.0.2.3", "10.0.2.4"], &["lan"], true, false, 100), scope("vpn", &["10.8.0.1"], &["corp.example"], false, false, 50)],
-        3 => vec![scope("lan", &["10.0.2.3"], &["lan"], true, false, 100), scope("vpn", &["10.8.0.1"], &["corp.example"], false, true, 50)],
-        _ => vec![scope("lan", &["10.0.2.9"], &["a.example", "b.example", "c.example"], false, false, 100)],
+        2 => vec![
+            scope("lan", &["10.0.2.3", "10.0.2.4"], &["lan"], true, false, 100),
+            scope("vpn", &["10.8.0.1"], &["corp.example"], false, false, 50),
+        ],
+        3 => vec![
+            scope("lan", &["10.0.2.3"], &["lan"], true, false, 100),
+            scope("vpn", &["10.8.0.1"], &["corp.example"], false, true, 50),
+        ],
+        _ => vec![scope(
+            "lan",
+            &["10.0.2.9"],
+            &["a.example", "b.example", "c.example"],
+            false,
+            false,
+            100,
+        )],
     }
 }
 
 /// A message that matches the transaction: decode what was sent and reply
 /// to it, so id and case pattern are right.
 fn answer_for(sent: &[u8], code: u8, records: u8, truncated: bool, soa: bool, ttl: u32) -> Vec<u8> {
-    let Ok(q) = Message::decode(sent) else { return Vec::new() };
+    let Ok(q) = Message::decode(sent) else {
+        return Vec::new();
+    };
     let mut m = Message::reply_to(&q);
     m.header.rcode = code % 6;
     m.header.truncated = truncated;
@@ -107,8 +169,16 @@ fn answer_for(sent: &[u8], code: u8, records: u8, truncated: bool, soa: bool, tt
     for i in 0..records % 4 {
         let rec = match i % 3 {
             0 => Record::new(qn.clone(), ttl, RData::A(Ipv4Addr::new(10, 0, 0, i))),
-            1 => Record::new(qn.clone(), ttl, RData::Cname(Name::parse("loop.example.com").unwrap())),
-            _ => Record::new(Name::parse("loop.example.com").unwrap(), ttl, RData::Cname(qn.clone())),
+            1 => Record::new(
+                qn.clone(),
+                ttl,
+                RData::Cname(Name::parse("loop.example.com").unwrap()),
+            ),
+            _ => Record::new(
+                Name::parse("loop.example.com").unwrap(),
+                ttl,
+                RData::Cname(qn.clone()),
+            ),
         };
         m.answers.push(rec);
     }
@@ -116,7 +186,15 @@ fn answer_for(sent: &[u8], code: u8, records: u8, truncated: bool, soa: bool, tt
         m.authority.push(Record::new(
             Name::parse("example.com").unwrap(),
             ttl,
-            RData::Soa { mname: Name::parse("a").unwrap(), rname: Name::parse("b").unwrap(), serial: 1, refresh: 1, retry: 1, expire: 1, minimum: ttl },
+            RData::Soa {
+                mname: Name::parse("a").unwrap(),
+                rname: Name::parse("b").unwrap(),
+                serial: 1,
+                refresh: 1,
+                retry: 1,
+                expire: 1,
+                minimum: ttl,
+            },
         ));
     }
     m.encode().unwrap_or_default()
@@ -140,7 +218,9 @@ fuzz_target!(|script: Script| {
     let mut answered: HashMap<u64, u32> = HashMap::new();
     let mut qid = 0u64;
 
-    let apply = |actions: Vec<Action>, open: &mut HashMap<u64, Vec<u8>>, answered: &mut HashMap<u64, u32>| {
+    let apply = |actions: Vec<Action>,
+                 open: &mut HashMap<u64, Vec<u8>>,
+                 answered: &mut HashMap<u64, u32>| {
         for a in actions {
             match a {
                 Action::Send { tx, payload, .. } => {
@@ -182,10 +262,20 @@ fuzz_target!(|script: Script| {
 
     for op in script.ops.into_iter().take(400) {
         let actions = match op {
-            Op::Resolve { name: n, rtype, no_cache } => {
+            Op::Resolve {
+                name: n,
+                rtype,
+                no_cache,
+            } => {
                 qid += 1;
                 asked.insert(qid);
-                e.resolve(qid, name(n), TYPES[rtype as usize % TYPES.len()], no_cache, now)
+                e.resolve(
+                    qid,
+                    name(n),
+                    TYPES[rtype as usize % TYPES.len()],
+                    no_cache,
+                    now,
+                )
             }
             Op::Lookup { name: n, family } => {
                 qid += 1;
@@ -202,7 +292,14 @@ fuzz_target!(|script: Script| {
                 asked.insert(qid);
                 e.reverse(qid, IpAddr::V4(Ipv4Addr::from(addr)), now)
             }
-            Op::Answer { which, code, records, truncated, soa, ttl } => match pick(which, &open) {
+            Op::Answer {
+                which,
+                code,
+                records,
+                truncated,
+                soa,
+                ttl,
+            } => match pick(which, &open) {
                 Some(tx) => {
                     let bytes = answer_for(&open[&tx], code, records, truncated, soa, ttl);
                     let acts = e.received(tx, &bytes, now);
@@ -225,11 +322,16 @@ fuzz_target!(|script: Script| {
             },
             Op::Wrong { which } => match pick(which, &open) {
                 Some(tx) => {
-                    let Ok(mut q) = Message::decode(&open[&tx]) else { continue };
+                    let Ok(mut q) = Message::decode(&open[&tx]) else {
+                        continue;
+                    };
                     q.questions[0].rtype ^= 1;
                     let m = Message::reply_to(&q).encode().unwrap();
                     let acts = e.received(tx, &m, now);
-                    assert!(acts.is_empty(), "a reply to the wrong question was accepted");
+                    assert!(
+                        acts.is_empty(),
+                        "a reply to the wrong question was accepted"
+                    );
                     acts
                 }
                 None => Vec::new(),
@@ -251,7 +353,10 @@ fuzz_target!(|script: Script| {
             }
             Op::Fallback { on } => {
                 if on {
-                    e.set_fallback(vec!["9.9.9.9".parse().unwrap()], vec![Name::parse("fb.example").unwrap()]);
+                    e.set_fallback(
+                        vec!["9.9.9.9".parse().unwrap()],
+                        vec![Name::parse("fb.example").unwrap()],
+                    );
                 } else {
                     e.set_fallback(vec![], vec![]);
                 }
@@ -260,7 +365,10 @@ fuzz_target!(|script: Script| {
             Op::Hosts { on } => {
                 let mut h = HashMap::new();
                 if on {
-                    h.insert(Name::parse("printer").unwrap(), vec!["10.0.2.9".parse().unwrap()]);
+                    h.insert(
+                        Name::parse("printer").unwrap(),
+                        vec!["10.0.2.9".parse().unwrap()],
+                    );
                 }
                 e.set_hosts(h);
                 Vec::new()
@@ -283,7 +391,12 @@ fuzz_target!(|script: Script| {
     }
     assert_eq!(e.in_flight(), 0, "transactions left after draining");
     for q in &asked {
-        assert_eq!(answered.get(q).copied().unwrap_or(0), 1, "qid {q} answered {:?} times", answered.get(q));
+        assert_eq!(
+            answered.get(q).copied().unwrap_or(0),
+            1,
+            "qid {q} answered {:?} times",
+            answered.get(q)
+        );
     }
     assert_eq!(rcode::NOERROR, 0);
 });

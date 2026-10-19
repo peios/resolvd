@@ -11,7 +11,7 @@ use std::net::IpAddr;
 use std::time::Instant;
 
 use dns::{Name, Record};
-use libresolv::Outcome;
+use resolvd_core::Outcome;
 
 /// Entries beyond this evict the soonest-to-expire. Sized for a busy
 /// workstation; a resolver with a hundred thousand hot names is not a stub.

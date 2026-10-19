@@ -2,7 +2,7 @@
 //! strings, binary, arrays, maps. Unknown values may also contain floats
 //! and extensions, which can be skipped without interpreting them.
 //!
-//! libresolv is linked into `libnss_peios_net.so.2`, which is loaded into
+//! resolvd_core is linked into `libnss_peios_net.so.2`, which is loaded into
 //! every process on the system, so it takes no dependency on libpeios (whose
 //! `peios::msgpack` this mirrors in API) — the same choice `libauthd` made for
 //! the identity shim. Total: every input decodes or returns an error.

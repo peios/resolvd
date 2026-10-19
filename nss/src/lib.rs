@@ -33,13 +33,14 @@
 #![deny(unsafe_op_in_unsafe_fn)]
 
 mod buffer;
+mod connect;
 
 use core::ffi::{c_char, c_int};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::os::unix::net::UnixStream;
 use std::time::Duration;
 
-use libresolv::{Addresses, Answer, Family, Outcome, Reply, Request, SOCKET_PATH};
+use resolvd_core::{Addresses, Answer, Family, Outcome, Reply, Request, SOCKET_PATH};
 
 use crate::buffer::Packer;
 
@@ -83,7 +84,7 @@ enum Got<T> {
 }
 
 fn connect() -> Option<UnixStream> {
-    let stream = UnixStream::connect(SOCKET_PATH).ok()?;
+    let stream = connect::connect_socket(std::path::Path::new(SOCKET_PATH)).ok()?;
     stream.set_read_timeout(Some(TIMEOUT)).ok()?;
     stream.set_write_timeout(Some(TIMEOUT)).ok()?;
     Some(stream)
@@ -93,7 +94,7 @@ fn lookup(name: &str, family: Family) -> Got<Addresses> {
     let Some(mut stream) = connect() else {
         return Got::Unavailable;
     };
-    match libresolv::call(
+    match resolvd_core::call(
         &mut stream,
         &Request::Lookup {
             name: name.to_owned(),
@@ -103,7 +104,7 @@ fn lookup(name: &str, family: Family) -> Got<Addresses> {
         Ok(Reply::Addresses(a)) => classify_addresses(a, family),
         Ok(_) => Got::Unavailable,
         // A timeout lands here: resolvd exists and did not answer in time.
-        Err(libresolv::WireError::Io(e))
+        Err(resolvd_core::WireError::Io(e))
             if e.kind() == std::io::ErrorKind::WouldBlock
                 || e.kind() == std::io::ErrorKind::TimedOut =>
         {
@@ -117,10 +118,10 @@ fn reverse(address: IpAddr) -> Got<Answer> {
     let Some(mut stream) = connect() else {
         return Got::Unavailable;
     };
-    match libresolv::call(&mut stream, &Request::Reverse { address }) {
+    match resolvd_core::call(&mut stream, &Request::Reverse { address }) {
         Ok(Reply::Answer(a)) => classify_reverse(a),
         Ok(_) => Got::Unavailable,
-        Err(libresolv::WireError::Io(e))
+        Err(resolvd_core::WireError::Io(e))
             if e.kind() == std::io::ErrorKind::WouldBlock
                 || e.kind() == std::io::ErrorKind::TimedOut =>
         {
@@ -139,13 +140,13 @@ fn is_localhost(name: &str) -> bool {
 fn local_addresses(family: Family) -> Addresses {
     let mut addresses = Vec::new();
     if family != Family::V6 {
-        addresses.push(libresolv::AddressOut {
+        addresses.push(resolvd_core::AddressOut {
             address: Ipv4Addr::LOCALHOST.into(),
             ttl: 0,
         });
     }
     if family != Family::V4 {
-        addresses.push(libresolv::AddressOut {
+        addresses.push(resolvd_core::AddressOut {
             address: Ipv6Addr::LOCALHOST.into(),
             ttl: 0,
         });
@@ -595,7 +596,7 @@ pub unsafe extern "C" fn _nss_peios_net_gethostbyaddr2_r(
     let got = if address.is_loopback() {
         Got::Value(Answer {
             outcome: Outcome::Found,
-            records: vec![libresolv::RecordOut {
+            records: vec![resolvd_core::RecordOut {
                 name: String::new(),
                 rtype: 12,
                 ttl: 0,

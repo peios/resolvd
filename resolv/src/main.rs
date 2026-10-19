@@ -10,15 +10,26 @@
 //!
 //! Owns nothing: every verb is one request on the native socket.
 
-use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
+use std::time::Duration;
 
-use libresolv::{Family, Outcome, Reply, Request, SOCKET_PATH};
+use resolvd_core::{Family, Outcome, Reply, Request};
 
 fn call(request: &Request) -> Result<Reply, String> {
-    let mut stream = UnixStream::connect(SOCKET_PATH)
-        .map_err(|e| format!("resolvd is not reachable at {SOCKET_PATH}: {e}"))?;
-    libresolv::call(&mut stream, request).map_err(|e| e.to_string())
+    let client = resolvd_client::Client::system(Duration::from_secs(10))
+        .map_err(|error| error.to_string())?;
+    match request {
+        Request::Status => client.status().map(Reply::Status),
+        Request::Flush => client.flush().map(|()| Reply::Ok),
+        Request::Lookup { name, family } => client.lookup(name, *family).map(Reply::Addresses),
+        Request::Resolve {
+            name,
+            rtype,
+            no_cache,
+        } => client.resolve(name, *rtype, *no_cache).map(Reply::Answer),
+        Request::Reverse { address } => client.reverse(&address.to_string()).map(Reply::Answer),
+    }
+    .map_err(|error| error.to_string())
 }
 
 fn outcome_code(o: Outcome) -> ExitCode {

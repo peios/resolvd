@@ -17,15 +17,15 @@ use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::Path;
 use std::time::{Duration, Instant};
 
-use libresolv::{
-    MAX_MESSAGE_BYTES, RESOLVD_RUN_DIR, RESOLVER_ALL_ACCESS, RESOLVER_CONTROL, RESOLVER_QUERY,
-    Reply, Request, SOCKET_PATH,
-};
 use peios::access::AccessCheck;
 use peios::security::{
     AccessMask, AceFlags, AclBuilder, GenericMapping, SdBuilder, SecurityDescriptor, Sid, WellKnown,
 };
 use peios::token::Token;
+use resolvd_core::{
+    MAX_MESSAGE_BYTES, RESOLVD_RUN_DIR, RESOLVER_ALL_ACCESS, RESOLVER_CONTROL, RESOLVER_QUERY,
+    Reply, Request, SOCKET_PATH,
+};
 
 use resolvd::log;
 
@@ -100,7 +100,11 @@ fn protect(path: &Path) {
     );
     match &me {
         Ok(me) => {
-            acl.allow(me.as_ref(), AccessMask::GENERIC_ALL.bits(), AceFlags::empty());
+            acl.allow(
+                me.as_ref(),
+                AccessMask::GENERIC_ALL.bits(),
+                AceFlags::empty(),
+            );
         }
         Err(e) => log::warn(format_args!(
             "could not read resolvd's own identity ({e}); a restart may not be able to \
@@ -351,7 +355,9 @@ mod request_frame_tests {
             peer.write_all(&length.to_le_bytes()).unwrap();
             peer.write_all(&payload).unwrap();
             peer.shutdown(Shutdown::Write).unwrap();
-            assert!(matches!(client.read(), Progress::Reply(Reply::Error(e)) if e == "request too large"));
+            assert!(
+                matches!(client.read(), Progress::Reply(Reply::Error(e)) if e == "request too large")
+            );
             assert_eq!(client.buf.len(), 4);
             let mut unread = Vec::new();
             client.stream.read_to_end(&mut unread).unwrap();

@@ -77,17 +77,17 @@ fn interface_index(interface: &str) -> io::Result<u32> {
 }
 
 fn server_address(server: IpAddr, interface: Option<&str>) -> io::Result<SocketAddr> {
-    if let IpAddr::V6(ip) = server {
-        if ip.is_unicast_link_local() {
-            let interface =
-                interface.ok_or_else(|| io::Error::from_raw_os_error(libc::EADDRNOTAVAIL))?;
-            return Ok(SocketAddr::V6(SocketAddrV6::new(
-                ip,
-                DNS_PORT,
-                0,
-                interface_index(interface)?,
-            )));
-        }
+    if let IpAddr::V6(ip) = server
+        && ip.is_unicast_link_local()
+    {
+        let interface =
+            interface.ok_or_else(|| io::Error::from_raw_os_error(libc::EADDRNOTAVAIL))?;
+        return Ok(SocketAddr::V6(SocketAddrV6::new(
+            ip,
+            DNS_PORT,
+            0,
+            interface_index(interface)?,
+        )));
     }
     Ok(SocketAddr::new(server, DNS_PORT))
 }

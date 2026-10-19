@@ -6,7 +6,7 @@
 use dns::{Message, Name, RData, Record};
 use libfuzzer_sys::arbitrary::{self, Arbitrary};
 use libfuzzer_sys::fuzz_target;
-use libresolv::Outcome;
+use resolvd_core::Outcome;
 use resolvd::engine::{Answer, Source};
 use resolvd::stub::{build_reply, parse_query};
 
@@ -29,19 +29,36 @@ fuzz_target!(|input: Input| {
         }
         Err(None) => return,
     };
-    let resolved = input.resolved.and_then(|b| std::str::from_utf8(&b).ok().and_then(|s| Name::parse(s).ok()));
+    let resolved = input.resolved.and_then(|b| {
+        std::str::from_utf8(&b)
+            .ok()
+            .and_then(|s| Name::parse(s).ok())
+    });
     let qname = query.question().map(|q| q.name.clone()).unwrap_or_default();
     let at = resolved.clone().unwrap_or(qname);
     let mut records = Vec::new();
     for i in 0..input.records % 50 {
-        records.push(Record::new(at.clone(), input.ttl, RData::A(std::net::Ipv4Addr::new(10, 0, 0, i))));
+        records.push(Record::new(
+            at.clone(),
+            input.ttl,
+            RData::A(std::net::Ipv4Addr::new(10, 0, 0, i)),
+        ));
     }
     let outcome = match input.outcome % 3 {
         0 => Outcome::Found,
         1 => Outcome::NotFound,
         _ => Outcome::Unavailable,
     };
-    let answer = Answer { outcome, records, source: Source::Dns, server: None, interface: None, rcode: 0, resolved_name: resolved, negative_ttl: 0 };
+    let answer = Answer {
+        outcome,
+        records,
+        source: Source::Dns,
+        server: None,
+        interface: None,
+        rcode: 0,
+        resolved_name: resolved,
+        negative_ttl: 0,
+    };
     let reply = build_reply(&query, &answer);
     let bytes = reply.encode().expect("a reply encodes");
     Message::decode(&bytes).expect("our reply decodes");

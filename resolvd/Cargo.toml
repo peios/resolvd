@@ -16,10 +16,10 @@ path = "src/main.rs"
 
 [dependencies]
 dns = { path = "../dns" }
-libresolv = { path = "../libresolv" }
+resolvd-core = { path = "../resolvd-core" }
 # The netd subscribe protocol: DNS scopes arrive on netd's control socket.
 # Pin the public release commit so this source tree never depends on a mutable
 # sibling checkout.
-libnetd = { git = "https://github.com/peios/netd.git", rev = "23af1f6b84f3764d9327eb009ced56b2a16b7aa8" }
+netd-core = { path = "../vendor/netd/netd-core" }
 libc = { workspace = true }
 peios = { workspace = true }

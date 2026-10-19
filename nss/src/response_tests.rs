@@ -66,7 +66,7 @@ fn answer(outcome: Outcome, rtypes: &[u16]) -> Answer {
         outcome,
         records: rtypes
             .iter()
-            .map(|&rtype| libresolv::RecordOut {
+            .map(|&rtype| resolvd_core::RecordOut {
                 name: "owner.test".into(),
                 rtype,
                 ttl: 13,

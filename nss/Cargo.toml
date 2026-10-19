@@ -13,9 +13,9 @@ publish.workspace = true
 name = "nss_peios_net"
 crate-type = ["cdylib"]
 
-# libresolv and libc, and nothing else. This object is loaded into every
+# resolvd-core and libc, and nothing else. This object is loaded into every
 # process that resolves a host, so its dependency list is the surface every
 # one of them inherits. libpeios is absent on purpose, as in nss-peios.
 [dependencies]
-libresolv = { path = "../libresolv" }
+resolvd-core = { path = "../resolvd-core" }
 libc = "0.2"

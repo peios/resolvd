@@ -10,8 +10,8 @@ cargo-fuzz = true
 [dependencies]
 libfuzzer-sys = { version = "0.4", features = ["arbitrary-derive"] }
 dns = { path = "../dns" }
-libresolv = { path = "../libresolv" }
-libnetd = { git = "https://github.com/peios/netd.git", rev = "23af1f6b84f3764d9327eb009ced56b2a16b7aa8" }
+resolvd-core = { path = "../resolvd-core" }
+netd-core = { git = "https://github.com/peios/netd.git", rev = "91185f8a21307911ac7d23e08877f7afb09ff122" }
 resolvd = { path = "../resolvd" }
 
 [[bin]]

@@ -7,11 +7,13 @@
 //! snapshots up; it never writes anything but the one request.
 
 use std::io::{self, Read};
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
+use std::os::unix::ffi::OsStrExt;
 use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::{Duration, Instant};
 
-use libnetd::{CONTROL_SOCKET_PATH, MAX_MESSAGE_BYTES, Reply, Request, Snapshot};
+use netd_core::{CONTROL_SOCKET_PATH, MAX_MESSAGE_BYTES, Reply, Request, Snapshot};
 
 use resolvd::log;
 
@@ -78,9 +80,9 @@ impl NetdLink {
     }
 
     fn connect(&self) -> io::Result<UnixStream> {
-        let mut stream = UnixStream::connect(CONTROL_SOCKET_PATH)?;
+        let mut stream = connect_socket(Path::new(CONTROL_SOCKET_PATH))?;
         stream.set_write_timeout(Some(Duration::from_secs(2)))?;
-        libnetd::send(&mut stream, &Request::Subscribe.encode())
+        netd_core::send(&mut stream, &Request::Subscribe.encode())
             .map_err(|e| io::Error::other(e.to_string()))?;
         stream.set_nonblocking(true)?;
         Ok(stream)
@@ -94,8 +96,9 @@ impl NetdLink {
         };
         let mut chunk = [0u8; 8192];
         let mut lost = false;
-        loop {
-            match stream.read(&mut chunk) {
+        while self.buf.len() < MAX_MESSAGE_BYTES + 4 {
+            let available = chunk.len().min(MAX_MESSAGE_BYTES + 4 - self.buf.len());
+            match stream.read(&mut chunk[..available]) {
                 Ok(0) => {
                     lost = true;
                     break;
@@ -154,10 +157,76 @@ impl NetdLink {
     }
 }
 
+/// Never wait for space in a listener's queue on the service's event loop.
+fn connect_socket(path: &Path) -> io::Result<UnixStream> {
+    let bytes = path.as_os_str().as_bytes();
+    // SAFETY: sockaddr_un is plain C storage; all fields are initialized below.
+    let mut address: libc::sockaddr_un = unsafe { std::mem::zeroed() };
+    if bytes.is_empty() || bytes.len() >= address.sun_path.len() || bytes.contains(&0) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid netd socket path",
+        ));
+    }
+    address.sun_family = libc::AF_UNIX as libc::sa_family_t;
+    for (target, source) in address.sun_path.iter_mut().zip(bytes) {
+        *target = *source as libc::c_char;
+    }
+    // SAFETY: constants request a new nonblocking, close-on-exec Unix stream.
+    let fd = unsafe {
+        libc::socket(
+            libc::AF_UNIX,
+            libc::SOCK_STREAM | libc::SOCK_NONBLOCK | libc::SOCK_CLOEXEC,
+            0,
+        )
+    };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: fd is newly allocated and uniquely owned here.
+    let socket = unsafe { OwnedFd::from_raw_fd(fd) };
+    let length = std::mem::offset_of!(libc::sockaddr_un, sun_path) + bytes.len() + 1;
+    // SAFETY: the initialized address covers length bytes and socket remains owned.
+    if unsafe {
+        libc::connect(
+            socket.as_raw_fd(),
+            (&raw const address).cast(),
+            length as libc::socklen_t,
+        )
+    } < 0
+    {
+        return Err(io::Error::last_os_error());
+    }
+    Ok(UnixStream::from(socket))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Write;
+
+    #[test]
+    fn a_full_listener_queue_returns_without_blocking() {
+        let directory = std::env::temp_dir().join(format!("netd-queue-{}", std::process::id()));
+        std::fs::create_dir(&directory).unwrap();
+        let path = directory.join("socket");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        // SAFETY: the live listener is a stream socket; backlog zero keeps this test small.
+        assert_eq!(unsafe { libc::listen(listener.as_raw_fd(), 0) }, 0);
+        let first = connect_socket(&path).unwrap();
+        let (done, wait) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            done.send(connect_socket(&path)).unwrap();
+        });
+        let error = wait
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::WouldBlock);
+        worker.join().unwrap();
+        drop((first, listener));
+        std::fs::remove_dir_all(directory).unwrap();
+    }
 
     fn attach(link: &mut NetdLink) -> UnixStream {
         let (stream, peer) = UnixStream::pair().unwrap();
@@ -176,8 +245,8 @@ mod tests {
         {
             let mut peer = attach(&mut link);
             match i % 3 {
-                0 => libnetd::send(&mut peer, &Reply::Error("denied".into()).encode()).unwrap(),
-                1 => libnetd::send(&mut peer, &[0xc1]).unwrap(),
+                0 => netd_core::send(&mut peer, &Reply::Error("denied".into()).encode()).unwrap(),
+                1 => netd_core::send(&mut peer, &[0xc1]).unwrap(),
                 _ => {}
             }
             drop(peer);
@@ -195,7 +264,7 @@ mod tests {
         let mut link = NetdLink::new(now);
         link.backoff = MAX_BACKOFF;
         let mut peer = attach(&mut link);
-        libnetd::send(&mut peer, &Reply::Ok.encode()).unwrap();
+        netd_core::send(&mut peer, &Reply::Ok.encode()).unwrap();
         assert!(link.service(now).is_empty());
         assert_eq!(link.backoff, MAX_BACKOFF);
         let snapshot = Snapshot {

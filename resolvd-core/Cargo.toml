@@ -1,5 +1,5 @@
 [package]
-name = "libresolv"
+name = "resolvd-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

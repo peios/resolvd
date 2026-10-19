@@ -12,22 +12,24 @@ mod entropy;
 mod netd_link;
 mod upstream;
 
+mod notification;
+
 use resolvd::{accept_backoff, engine, log, reply_queue::Replies, stub};
 
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::os::fd::{AsRawFd, RawFd};
-use std::os::unix::net::{UnixDatagram, UnixStream};
+use std::os::unix::net::UnixStream;
 use std::process::ExitCode;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use dns::{Name, Record};
-use libnetd::{DnsScope, Snapshot};
-use libresolv::{
+use netd_core::{DnsScope, Snapshot};
+use peios::registry::Key;
+use resolvd_core::{
     AddressOut, Addresses, Answer, Counters, Family, RecordOut, Reply, Request, ScopeStatus,
     StatusReport, Validation,
 };
-use peios::registry::Key;
 
 use engine::{Action, Completion, Engine, Qid, Scope};
 use stub::{Incoming, Origin};
@@ -241,7 +243,7 @@ impl Resolvd {
                 self.stub.answer(
                     origin,
                     &engine::Answer {
-                        outcome: libresolv::Outcome::Unavailable,
+                        outcome: resolvd_core::Outcome::Unavailable,
                         ..Default::default()
                     },
                 );
@@ -402,16 +404,15 @@ fn kernel_hostname() -> Option<String> {
 }
 
 fn notify_ready() {
-    let Ok(path) = std::env::var("NOTIFY_SOCKET") else {
+    let Some(path) = std::env::var_os("NOTIFY_SOCKET") else {
         return;
     };
-    match UnixDatagram::unbound() {
-        Ok(s) => {
-            if let Err(e) = s.send_to(b"READY=1", &path) {
-                log::warn(format_args!("readiness notify: {e}"));
-            }
-        }
-        Err(e) => log::warn(format_args!("readiness notify: {e}")),
+    if let Err(error) = notification::send(
+        std::path::Path::new(&path),
+        b"READY=1",
+        Duration::from_secs(1),
+    ) {
+        log::warn(format_args!("notify: {error}"));
     }
 }
 
@@ -428,14 +429,20 @@ fn main() -> ExitCode {
         Err(e) => {
             log::error(format_args!(
                 "stub listener on {}:{}: {e}",
-                libresolv::STUB_ADDRESS,
-                libresolv::STUB_PORT
+                resolvd_core::STUB_ADDRESS,
+                resolvd_core::STUB_PORT
             ));
             return ExitCode::FAILURE;
         }
     };
     let now = Instant::now();
-    let config = config::load();
+    let config = match config::load() {
+        Ok(config) => config,
+        Err(error) => {
+            log::error(format_args!("reading configuration: {error}"));
+            return ExitCode::FAILURE;
+        }
+    };
     let mut watch: Option<Key> = match config::watch() {
         Ok(k) => Some(k),
         Err(e) => {
@@ -465,9 +472,9 @@ fn main() -> ExitCode {
     r.netd.maintain(now);
     log::info(format_args!(
         "listening on {} and {}:{}",
-        libresolv::SOCKET_PATH,
-        libresolv::STUB_ADDRESS,
-        libresolv::STUB_PORT
+        resolvd_core::SOCKET_PATH,
+        resolvd_core::STUB_ADDRESS,
+        resolvd_core::STUB_PORT
     ));
     notify_ready();
 
@@ -600,10 +607,10 @@ fn main() -> ExitCode {
             }
         }
         for (id, slot) in reply_slots {
-            if fds[slot].revents != 0 {
-                if let Err(e) = r.replies.service(id, Instant::now()) {
-                    log::warn(format_args!("control: reply failed: {e}"));
-                }
+            if fds[slot].revents != 0
+                && let Err(e) = r.replies.service(id, Instant::now())
+            {
+                log::warn(format_args!("control: reply failed: {e}"));
             }
         }
         for (id, slot) in stub_reply_slots {
@@ -693,7 +700,12 @@ fn main() -> ExitCode {
             && let Some(w) = &watch
         {
             match w.read_watch_events(&mut watch_buffer) {
-                Ok(events) if !events.is_empty() => r.apply_config(config::load()),
+                Ok(events) if !events.is_empty() => match config::load() {
+                    Ok(config) => r.apply_config(config),
+                    Err(error) => {
+                        log::warn(format_args!("keeping previous configuration: {error}"))
+                    }
+                },
                 Ok(_) => {}
                 Err(e) => {
                     log::warn(format_args!("registry watch: {e}; re-arming"));

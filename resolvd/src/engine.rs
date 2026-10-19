@@ -43,8 +43,8 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::time::{Duration, Instant};
 
 use dns::{Message, Name, Question, RData, Record, rcode, rtype};
-use libnetd::Level;
-use libresolv::Outcome;
+use netd_core::Level;
+use resolvd_core::Outcome;
 
 use crate::cache::{Cache, CacheKey, Entry};
 
@@ -1255,10 +1255,11 @@ fn relevant_records(records: Vec<Record>, candidate: &Name, qtype: u16) -> (Vec<
         }
         seen.push(name.clone());
         let next = records.iter().enumerate().find_map(|(index, record)| {
-            if record.class == dns::class::IN && record.name == name {
-                if let RData::Cname(target) = &record.rdata {
-                    return Some((index, target.clone()));
-                }
+            if record.class == dns::class::IN
+                && record.name == name
+                && let RData::Cname(target) = &record.rdata
+            {
+                return Some((index, target.clone()));
             }
             None
         });
