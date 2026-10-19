@@ -1,0 +1,21 @@
+{
+    "name": "resolvd",
+    "client": "resolv",
+    "api": "resolvd",
+    "library": "libresolvd",
+    "version": "0.1.6",
+    "destinations": {
+        "resolvd": "usr/sbin/resolvd",
+        "resolv": "usr/bin/resolv",
+        "libresolvd": "usr/lib/x86_64-linux-peios/libresolvd.so.1",
+        "nss": "usr/lib/x86_64-linux-peios/libnss_peios_net.so.2"
+    },
+    "sonames": {
+        "libresolvd": "libresolvd.so.1",
+        "nss": "libnss_peios_net.so.2"
+    },
+    "needed": {
+        "resolv": ["libresolvd.so.1"],
+        "resolvd": ["libpeios.so.0"]
+    }
+}

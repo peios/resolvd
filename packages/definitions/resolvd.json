@@ -1,0 +1,26 @@
+{
+    "package": {
+        "name": "dev.peios.resolvd",
+        "description": "Peios machine-wide name-resolution service",
+        "version": "0.1.6-1",
+        "architecture": "x86_64",
+        "license_class": "free",
+        "homepage": "https://github.com/peios/resolvd"
+    },
+    "files": {
+        "stage:usr/share/man/man8/resolvd.8.gz": "usr/share/man/man8/resolvd.8.gz",
+        "source:LICENSE": "usr/share/licenses/dev.peios.resolvd/LICENSE",
+        "stage:licenses/resolvd/**": "usr/share/licenses/dev.peios.resolvd/third-party",
+        "stage:usr/sbin/resolvd": "usr/sbin/resolvd",
+        "stage:usr/etc/resolv.conf": "usr/etc/resolv.conf",
+        "stage:usr/share/regim/resolvd-service.reg": "usr/share/regim/resolvd-service.reg",
+        "stage:usr/share/regim/resolvd-port.reg": "usr/share/regim/resolvd-port.reg",
+        "stage:usr/share/regman/resolvd.regman": "usr/share/regman/resolvd.regman"
+    },
+    "license_component": "resolvd",
+    "dependencies": {
+        "org.gnu.glibc": "*",
+        "org.gnu.gcc-libgcc": "*"
+    },
+    "executables": ["usr/sbin/resolvd"]
+}

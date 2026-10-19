@@ -1,0 +1,24 @@
+{
+    "package": {
+        "name": "dev.peios.libresolvd-devel",
+        "version": "0.1.6-1",
+        "architecture": "x86_64",
+        "license_class": "free",
+        "description": "C headers and linker metadata for libresolvd",
+        "homepage": "https://github.com/peios/resolvd"
+    },
+    "license_component": "libresolvd",
+    "dependencies": {
+        "dev.peios.libresolvd": "= 0.1.6-1"
+    },
+    "files": {
+        "source:LICENSE": "usr/share/licenses/dev.peios.libresolvd-devel/LICENSE",
+        "stage:licenses/libresolvd/**": "usr/share/licenses/dev.peios.libresolvd-devel/third-party",
+        "stage:usr/include/**": "usr/include",
+        "stage:usr/lib/x86_64-linux-peios/libresolvd.so": "usr/lib/x86_64-linux-peios/libresolvd.so",
+        "stage:usr/lib/x86_64-linux-peios/pkgconfig/resolvd.pc": "usr/lib/x86_64-linux-peios/pkgconfig/resolvd.pc",
+        "stage:usr/share/man/man3/libresolvd.3.gz": "usr/share/man/man3/libresolvd.3.gz"
+    },
+    "executables": [],
+    "side_effects": ["man-db"]
+}

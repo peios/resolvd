@@ -1,0 +1,227 @@
+{
+  "name": "resolvd",
+  "types": {
+    "RecordOut": {
+      "rust": "resolvd_core::RecordOut",
+      "fields": [
+        [
+          "name",
+          "String"
+        ],
+        [
+          "rtype",
+          "u16"
+        ],
+        [
+          "ttl",
+          "u32"
+        ],
+        [
+          "data",
+          "Vec<u8>"
+        ],
+        [
+          "text",
+          "String"
+        ]
+      ]
+    },
+    "Answer": {
+      "rust": "resolvd_core::Answer",
+      "fields": [
+        [
+          "outcome",
+          "Outcome"
+        ],
+        [
+          "records",
+          "Vec<RecordOut>"
+        ],
+        [
+          "source",
+          "String"
+        ],
+        [
+          "server",
+          "Option<String>"
+        ],
+        [
+          "interface",
+          "Option<String>"
+        ],
+        [
+          "validation",
+          "Validation"
+        ],
+        [
+          "rcode",
+          "u16"
+        ]
+      ]
+    },
+    "AddressOut": {
+      "rust": "resolvd_core::AddressOut",
+      "fields": [
+        [
+          "address",
+          "IpAddr"
+        ],
+        [
+          "ttl",
+          "u32"
+        ]
+      ]
+    },
+    "Addresses": {
+      "rust": "resolvd_core::Addresses",
+      "fields": [
+        [
+          "outcome",
+          "Outcome"
+        ],
+        [
+          "canonical",
+          "String"
+        ],
+        [
+          "addresses",
+          "Vec<AddressOut>"
+        ],
+        [
+          "source",
+          "String"
+        ],
+        [
+          "validation",
+          "Validation"
+        ]
+      ]
+    },
+    "Counters": {
+      "rust": "resolvd_core::Counters",
+      "fields": [
+        [
+          "queries",
+          "u64"
+        ],
+        [
+          "synthetic",
+          "u64"
+        ],
+        [
+          "cache_hits",
+          "u64"
+        ],
+        [
+          "upstream_sent",
+          "u64"
+        ],
+        [
+          "upstream_answered",
+          "u64"
+        ],
+        [
+          "upstream_failed",
+          "u64"
+        ],
+        [
+          "refused",
+          "u64"
+        ]
+      ]
+    },
+    "ScopeStatus": {
+      "rust": "resolvd_core::ScopeStatus",
+      "fields": [
+        [
+          "interface",
+          "String"
+        ],
+        [
+          "servers",
+          "Vec<String>"
+        ],
+        [
+          "domains",
+          "Vec<String>"
+        ],
+        [
+          "default_route",
+          "bool"
+        ],
+        [
+          "exclusive",
+          "bool"
+        ],
+        [
+          "metric",
+          "u32"
+        ],
+        [
+          "subnets",
+          "Vec<String>"
+        ],
+        [
+          "demoted",
+          "Vec<String>"
+        ]
+      ]
+    },
+    "StatusReport": {
+      "rust": "resolvd_core::StatusReport",
+      "fields": [
+        [
+          "hostname",
+          "String"
+        ],
+        [
+          "netd",
+          "bool"
+        ],
+        [
+          "scopes",
+          "Vec<ScopeStatus>"
+        ],
+        [
+          "fallback_servers",
+          "Vec<String>"
+        ],
+        [
+          "cache_entries",
+          "u64"
+        ],
+        [
+          "counters",
+          "Counters"
+        ]
+      ]
+    }
+  },
+  "enums": {
+    "Family": [
+      "Any",
+      "V4",
+      "V6"
+    ],
+    "Request": [
+      "Status",
+      "Flush"
+    ],
+    "Outcome": [
+      "Found",
+      "NotFound",
+      "Unavailable"
+    ],
+    "Validation": [
+      "Unvalidated",
+      "Secure",
+      "Insecure",
+      "Bogus"
+    ]
+  },
+  "outputs": [
+    "Answer",
+    "Addresses",
+    "StatusReport"
+  ]
+}

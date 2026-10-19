@@ -1,0 +1,20 @@
+{
+    "package": {
+        "name": "dev.peios.libresolvd-debuginfo",
+        "version": "0.1.6-1",
+        "architecture": "x86_64",
+        "license_class": "free",
+        "description": "Debug symbols for libresolvd",
+        "homepage": "https://github.com/peios/resolvd"
+    },
+    "license_component": "libresolvd",
+    "dependencies": {
+        "dev.peios.libresolvd": "= 0.1.6-1"
+    },
+    "files": {
+        "source:LICENSE": "usr/share/licenses/dev.peios.libresolvd-debuginfo/LICENSE",
+        "stage:licenses/libresolvd/**": "usr/share/licenses/dev.peios.libresolvd-debuginfo/third-party",
+        "stage:debug/libresolvd/usr/lib/debug/**": "usr/lib/debug"
+    },
+    "executables": []
+}

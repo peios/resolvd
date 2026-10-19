@@ -1,0 +1,20 @@
+{
+    "package": {
+        "name": "dev.peios.resolvd-nss-debuginfo",
+        "description": "Debugging symbols for the Peios NSS host-resolution module",
+        "version": "0.1.6-1",
+        "architecture": "x86_64",
+        "license_class": "free",
+        "homepage": "https://github.com/peios/resolvd"
+    },
+    "dependencies": {
+        "dev.peios.resolvd-nss": "= 0.1.6-1"
+    },
+    "files": {
+        "source:LICENSE": "usr/share/licenses/dev.peios.resolvd-nss-debuginfo/LICENSE",
+        "stage:licenses/nss/**": "usr/share/licenses/dev.peios.resolvd-nss-debuginfo/third-party",
+        "stage:debug/nss/usr/lib/debug/**": "usr/lib/debug"
+    },
+    "license_component": "nss",
+    "executables": []
+}

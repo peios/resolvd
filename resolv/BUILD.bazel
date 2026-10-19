@@ -1,0 +1,96 @@
+load("@crates//:crates.bzl", "all_crate_deps")
+load("@rules_rust//rust:defs.bzl", "rust_binary", "rust_test")
+load("//build:checks.bzl", "shared_test")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "BUILD.bazel",
+    "Cargo.toml",
+])
+
+filegroup(
+    name = "sources",
+    srcs = glob(
+        [
+            "src/**",
+            "tests/**",
+            "include/**",
+            "build.rs",
+        ],
+        allow_empty = True,
+    ),
+)
+
+rust_binary(
+    name = "resolv",
+    srcs = glob(["src/**/*.rs"]),
+    compile_data = [
+        "Cargo.toml",
+        "//:crate-data",
+    ],
+    crate_name = "resolv",
+    crate_root = "src/main.rs",
+    edition = "2024",
+    version = "0.1.6",
+    deps = [
+        "//dns",
+        "//resolvd-client",
+        "//resolvd-core",
+    ] + all_crate_deps(normal = True),
+)
+
+rust_test(
+    name = "resolv-tests-binary",
+    size = "small",
+    crate = ":resolv",
+    tags = ["manual"],
+)
+
+shared_test(
+    name = "resolv-tests",
+    size = "small",
+    binary = ":resolv-tests-binary",
+    libraries = [
+        "@peios_sdk//:library",
+        "//libresolvd:soname",
+    ],
+)
+
+filegroup(
+    name = "package-files",
+    srcs = glob(
+        [
+            "**",
+            ".github/**",
+        ],
+        allow_empty = True,
+        exclude = [
+            "**/__pycache__/**",
+            "**/*.pyc",
+            "**/target/**",
+            "target/**",
+            "bazel-*/**",
+            "**/.git/**",
+            ".ci-sdk/**",
+            "**/node_modules/**",
+            "**/.venv/**",
+            "**/.cache/**",
+            "**/.trail-cache/**",
+            "docs/learn/dist/**",
+            "docs/archive/**",
+            "pekit.toml",
+            "lint.pekit.toml",
+            "packages.pekit/**",
+            "packaging/**",
+            "out/**",
+            "fuzz/corpus/**",
+            "fuzz/artifacts/**",
+            ".bazel-vendor/**",
+            ".build/**",
+            "fuzz/logs/**",
+            "fuzz/*.log",
+        ],
+    ),
+    visibility = ["//visibility:public"],
+)

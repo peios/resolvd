@@ -1,0 +1,21 @@
+{
+    "package": {
+        "name": "dev.peios.libresolvd",
+        "version": "0.1.6-1",
+        "architecture": "x86_64",
+        "license_class": "free",
+        "description": "Shared client and configuration API for resolvd",
+        "homepage": "https://github.com/peios/resolvd"
+    },
+    "license_component": "libresolvd",
+    "dependencies": {
+        "org.gnu.glibc": "*",
+        "org.gnu.gcc-libgcc": "*"
+    },
+    "files": {
+        "source:LICENSE": "usr/share/licenses/dev.peios.libresolvd/LICENSE",
+        "stage:licenses/libresolvd/**": "usr/share/licenses/dev.peios.libresolvd/third-party",
+        "stage:usr/lib/x86_64-linux-peios/libresolvd.so.1": "usr/lib/x86_64-linux-peios/libresolvd.so.1"
+    },
+    "executables": ["usr/lib/x86_64-linux-peios/libresolvd.so.1"]
+}

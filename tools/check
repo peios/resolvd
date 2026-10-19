@@ -1,0 +1,22 @@
+#!/bin/bash
+# Validate maintained sources and declared development build/package outputs.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+: "${PEIOS_SDK:?Set PEIOS_SDK to an explicit development SDK}"
+python3 tools/style-check.py
+python3 tools/generate-api-types.py --check
+./bazel test //...
+./bazel build //:packages
+client_sdk=$(mktemp -d "${TMPDIR:-/tmp}/service-check-sdk.XXXXXXXX")
+trap 'rm -rf -- "$client_sdk"' EXIT HUP INT TERM
+cp bazel-bin/libresolvd/libresolvd_ffi.so "$client_sdk/libresolvd.so.1"
+ln -s libresolvd.so.1 "$client_sdk/libresolvd.so"
+export PEIOS_RESOLVD_LIB_DIR="$client_sdk"
+export PEIOS_LIB_DIR="$PEIOS_SDK/lib"
+export PEIOS_INCLUDE="$PEIOS_SDK/include"
+export PKM_UAPI="$PEIOS_SDK/include"
+export LD_LIBRARY_PATH="$client_sdk:$PEIOS_LIB_DIR${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+compiler_include=$(cc -print-file-name=include)
+export BINDGEN_EXTRA_CLANG_ARGS="-isystem $compiler_include"
+cargo +1.98.1 clippy -p libresolvd -p resolvd-client -p resolvd-abi -p dns -p resolvd-core -p resolvd -p resolv -p nss_peios_net --all-targets --no-deps --locked -- -D warnings
+cargo +1.98.1 test -p libresolvd -p resolvd-client -p resolvd-abi -p dns -p resolvd-core -p resolvd -p resolv -p nss_peios_net --doc --locked

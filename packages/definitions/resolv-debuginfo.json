@@ -1,0 +1,20 @@
+{
+    "package": {
+        "name": "dev.peios.resolv-debuginfo",
+        "description": "Debugging symbols for the Peios name-resolution client",
+        "version": "0.1.6-1",
+        "architecture": "x86_64",
+        "license_class": "free",
+        "homepage": "https://github.com/peios/resolvd"
+    },
+    "dependencies": {
+        "dev.peios.resolv": "= 0.1.6-1"
+    },
+    "files": {
+        "source:LICENSE": "usr/share/licenses/dev.peios.resolv-debuginfo/LICENSE",
+        "stage:licenses/resolv/**": "usr/share/licenses/dev.peios.resolv-debuginfo/third-party",
+        "stage:debug/resolv/usr/lib/debug/**": "usr/lib/debug"
+    },
+    "license_component": "resolv",
+    "executables": []
+}

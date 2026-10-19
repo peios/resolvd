@@ -1,0 +1,151 @@
+load("//packages:package.bzl", "package_store")
+
+package(default_visibility = ["//visibility:public"])
+
+exports_files([
+    "Cargo.toml",
+    "Cargo.lock",
+    "MODULE.bazel",
+])
+
+filegroup(
+    name = "rust-data",
+    srcs = [
+        "Cargo.lock",
+        "Cargo.toml",
+        "//dns:Cargo.toml",
+        "//dns:sources",
+        "//libresolvd:Cargo.toml",
+        "//libresolvd:sources",
+        "//nss:Cargo.toml",
+        "//nss:sources",
+        "//resolv:Cargo.toml",
+        "//resolv:sources",
+        "//resolvd:Cargo.toml",
+        "//resolvd:sources",
+        "//resolvd-abi:Cargo.toml",
+        "//resolvd-abi:sources",
+        "//resolvd-client:Cargo.toml",
+        "//resolvd-client:sources",
+        "//resolvd-core:Cargo.toml",
+        "//resolvd-core:sources",
+        "//vendor/netd/netd-core:Cargo.toml",
+        "//vendor/netd/netd-core:sources",
+    ],
+)
+
+filegroup(
+    name = "artifacts",
+    srcs = [
+        "//libresolvd:shared",
+        "//nss:shared",
+        "//resolv",
+        "//resolvd:resolvd-bin",
+    ],
+)
+
+filegroup(
+    name = "crate-data",
+    srcs = [
+        "Cargo.lock",
+        "Cargo.toml",
+        "LICENSE",
+    ] + [],
+)
+
+filegroup(
+    name = "package-data",
+    srcs = [
+        "Cargo.lock",
+        "Cargo.toml",
+        "LICENSE",
+        "//libresolvd:headers",
+        "//packages:definitions",
+        "//packages:family.json",
+    ] + [
+        "//dns:Cargo.toml",
+        "//libresolvd:Cargo.toml",
+        "//nss:Cargo.toml",
+        "//resolv:Cargo.toml",
+        "//resolvd:Cargo.toml",
+        "//resolvd-abi:Cargo.toml",
+        "//resolvd-client:Cargo.toml",
+        "//resolvd-core:Cargo.toml",
+        "//vendor/netd/netd-core:Cargo.toml",
+    ] + glob(
+        [
+            "docs/*.regman",
+            "docs/*.evman",
+            "docs/man/*",
+            "registry.d/*",
+            "libexec/*",
+            "etc/*",
+            "third-party/*",
+        ],
+        allow_empty = True,
+    ),
+)
+
+filegroup(
+    name = "package-sources",
+    srcs = glob(
+        [
+            "**",
+            ".github/**",
+            ".bazelrc",
+            ".bazelversion",
+            ".editorconfig",
+            ".gitignore",
+            ".gitattributes",
+        ],
+        allow_empty = True,
+        exclude = [
+            "**/__pycache__/**",
+            "**/*.pyc",
+            "**/target/**",
+            "target/**",
+            "bazel-*/**",
+            "**/.git/**",
+            ".ci-sdk/**",
+            "**/node_modules/**",
+            "**/.venv/**",
+            "**/.cache/**",
+            ".ci-sdk/**",
+            "**/node_modules/**",
+            "**/.venv/**",
+            "**/.cache/**",
+            "**/.trail-cache/**",
+            "docs/learn/dist/**",
+            "docs/archive/**",
+            "pekit.toml",
+            "lint.pekit.toml",
+            "packages.pekit/**",
+            "packaging/**",
+            "out/**",
+            "fuzz/corpus/**",
+            "fuzz/artifacts/**",
+            ".bazel-vendor/**",
+            ".build/**",
+            "fuzz/logs/**",
+            "fuzz/*.log",
+        ],
+    ) + [
+        "//build:package-files",
+        "//dns:package-files",
+        "//libresolvd:package-files",
+        "//nss:package-files",
+        "//packages:package-files",
+        "//resolv:package-files",
+        "//resolvd:package-files",
+        "//resolvd-abi:package-files",
+        "//resolvd-client:package-files",
+        "//resolvd-core:package-files",
+        "//vendor/netd/netd-core:package-files",
+        "//vendor/ppk:package-files",
+    ],
+)
+
+package_store(
+    name = "packages",
+    packages = ["//packages:all"],
+)

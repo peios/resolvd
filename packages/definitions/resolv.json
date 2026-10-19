@@ -1,0 +1,23 @@
+{
+    "package": {
+        "name": "dev.peios.resolv",
+        "description": "Peios name-resolution operator client",
+        "version": "0.1.6-1",
+        "architecture": "x86_64",
+        "license_class": "free",
+        "homepage": "https://github.com/peios/resolvd"
+    },
+    "files": {
+        "stage:usr/share/man/man1/resolv.1.gz": "usr/share/man/man1/resolv.1.gz",
+        "source:LICENSE": "usr/share/licenses/dev.peios.resolv/LICENSE",
+        "stage:usr/bin/resolv": "usr/bin/resolv",
+        "stage:licenses/resolv/**": "usr/share/licenses/dev.peios.resolv/third-party"
+    },
+    "license_component": "resolv",
+    "dependencies": {
+        "org.gnu.glibc": "*",
+        "org.gnu.gcc-libgcc": "*",
+        "dev.peios.libresolvd": "= 0.1.6-1"
+    },
+    "executables": ["usr/bin/resolv"]
+}
