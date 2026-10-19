@@ -1,0 +1,3 @@
+title = "resolvd"
+short = "resolvd"
+description = "The stub resolver as built: how resolvd takes its scopes from netd and its fallbacks from the registry, routes, expands, caches and forwards every question, and answers it at the native socket, the 127.0.0.53 stub listener and the NSS shim."

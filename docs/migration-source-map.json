@@ -1,0 +1,310 @@
+{
+    "source_root": "learn-staging",
+    "entries": [
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/1--introduction/1--overview.md",
+            "sha256": "6c59163eb22a4b0661f15c041f73629d2f98fd388b498aef6596c28d51b217c6",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/1--introduction/1--overview.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/1--introduction/1--overview.md",
+            "destination_sha256": "f9759d312f311738cd50f38a1f72d386f3cd204b8fb720944f5cd6f96f9b883c"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/1--introduction/2--what-this-manual-covers.md",
+            "sha256": "6f4f388e6bf33b7ae90f95b69564a604126f7774f6b0a799447f278be9fdef05",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/1--introduction/2--what-this-manual-covers.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/1--introduction/2--what-this-manual-covers.md",
+            "destination_sha256": "2c815372724e6e8a01bad2ead45de22771832535bb002e33e2aad12576393028"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/1--introduction/3--terminology.md",
+            "sha256": "aa3a50d290310a3245b8c299d07e516c527b47ec85bd99ad10c8bf21b5e7deca",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/1--introduction/3--terminology.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/1--introduction/3--terminology.md",
+            "destination_sha256": "58e0692dbc0a56595bd3d73bb16de03e069096d4c89c507966a58d53ae01c4a7"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/1--the-service.md",
+            "sha256": "614389ef76ff8a9ae0c2d574c239d2f6f172194bc648b1684bdd252f42552eca",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/1--the-service.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/1--the-service.md",
+            "destination_sha256": "2a521c900ae6e8c7a2ee7227e4cc9049c1ebd2322dc25ddc64816c6b1c51eb7c"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/2--startup-sequence.md",
+            "sha256": "289328881b2a3747b2685ebcdc412bb753b3975eb87f69578738bf2c7a3e3964",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/2--startup-sequence.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/2--startup-sequence.md",
+            "destination_sha256": "60de735d458c03753898aa9d1866498f868db1ae97ba164fc5ceaf08e22b544d"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/3--registry-configuration.md",
+            "sha256": "0c109ab2b564a6a04cc80348880873168b5bb8cb9a3c8a47f6390e87a54f165d",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/3--registry-configuration.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/3--registry-configuration.md",
+            "destination_sha256": "e1c5da74619f2116ee2f696bd7469dc612879d9b44f3c971e9d043f34603f3b6"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/4--sockets.md",
+            "sha256": "47656b2b5288bc4ca126ee322c7a8b7b2f85bd7152301dfdcd0ae54cbf4db993",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/4--sockets.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/4--sockets.md",
+            "destination_sha256": "b7ab1c1bf6392e1a12a399aaba36e9ca479932d2821f0da5610ac27587bb23d4"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/5--the-event-loop.md",
+            "sha256": "de73135a9e36ed48b934ac8f818142334c7588cf0c48b2ed953d56b30555ec00",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/5--the-event-loop.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/2--startup-and-configuration/5--the-event-loop.md",
+            "destination_sha256": "e620c0e532ced5c616662fb47cc3ff8d53d32cb607fcc0e48339c9e8d233523f"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/3--the-netd-channel/1--subscription.md",
+            "sha256": "962d9792f80a491d123bd23333c90490036c9041065a3fe3d58dd5265bb5e014",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/3--the-netd-channel/1--subscription.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/3--the-netd-channel/1--subscription.md",
+            "destination_sha256": "0a36dde7cc18294ae0015942d75409ccabd1978fa0d314b96b37a9602f26e0ed"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/3--the-netd-channel/2--reconnection.md",
+            "sha256": "da138343c6652f51d23822dbb3b063aa1849af202b33b9b51c389e6322532169",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/3--the-netd-channel/2--reconnection.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/3--the-netd-channel/2--reconnection.md",
+            "destination_sha256": "5f5beac3bcb006d93f9e7aedfa415aa1dbc244dec22c8366105489921602f6ab"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/3--the-netd-channel/3--applying-a-snapshot.md",
+            "sha256": "6fa9f4a5de1ea15a3d28fb49db3b962d53fc4b6caf6ff585821b2454346fce16",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/3--the-netd-channel/3--applying-a-snapshot.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/3--the-netd-channel/3--applying-a-snapshot.md",
+            "destination_sha256": "724e671237d448c05eb29380a8c5c10271f3bd19d6d296a9be37f860751c968a"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/1--how-a-question-is-answered.md",
+            "sha256": "bf5c725f297e3bc4c61bc5ef762e68739473bcbb58dd198dca2c5fe9e779bad7",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/1--how-a-question-is-answered.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/1--how-a-question-is-answered.md",
+            "destination_sha256": "e9d0dde2c6536f55b01d23afd3d0d1b553548b9825accce54e6f55f146043d7b"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/10--counters.md",
+            "sha256": "14b316f1912dcff6557f73db2e4db4156860e2b090846fee35e92746f54a4a25",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/10--counters.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/10--counters.md",
+            "destination_sha256": "14b316f1912dcff6557f73db2e4db4156860e2b090846fee35e92746f54a4a25"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/2--synthetic-names.md",
+            "sha256": "434f8a442da9a91cca30f516fae61e217e2553b3f5468e3c16ec321f4dfccf69",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/2--synthetic-names.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/2--synthetic-names.md",
+            "destination_sha256": "7180cb6010dc9092112d32b04a99da52829a332846a97486c0b1d419768a289a"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/3--single-label-expansion.md",
+            "sha256": "5cb8b8ef4bcb600847362fd6ad5654462c75e02883d60636d0101b7e681483f1",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/3--single-label-expansion.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/3--single-label-expansion.md",
+            "destination_sha256": "3ae78955bd12bcefd5a7a3ab23093b23cc5be1a0a24f9604a72d4ebd87316d6d"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/4--scope-routing.md",
+            "sha256": "268cf41722e3ca3e206c5ef3711afcd347aaf7bf10fda064b8e6a98d89a99c5d",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/4--scope-routing.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/4--scope-routing.md",
+            "destination_sha256": "4d521d63be6eeab93101cfe88f179c31cffb6acaa89420cbf6bea1136f6a03e8"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/5--the-cache.md",
+            "sha256": "77ab33770da7782f3f82562d99742174b59191988c3f4b29564ae5a5ac12f0fd",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/5--the-cache.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/5--the-cache.md",
+            "destination_sha256": "a99a7ed21268f71a6023efb50f364cb5523ff702bdcdcf9caeb871477d1ab792"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/6--servers-attempts-and-timeouts.md",
+            "sha256": "b934851b783758749d09761bf749d1fee2edb1ee97cdcdd38e96eb6481b26037",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/6--servers-attempts-and-timeouts.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/6--servers-attempts-and-timeouts.md",
+            "destination_sha256": "c8155bb642d3572a72b0e6ac6830510cc4342cb973a8669f146ef76ee54417c4"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/7--the-upstream-query.md",
+            "sha256": "689989049927a711509c0337c9b97d3c7f491b639bd02008cfc9f5aeccff0d73",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/7--the-upstream-query.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/7--the-upstream-query.md",
+            "destination_sha256": "ab378e65a2a80a52ffb5851738811f6fe7d9f6880abd251c6e18653552cb30cb"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/8--reply-validation.md",
+            "sha256": "ad71c9d02950409b4394fdb1bc92cc8866c545d24d77bc7124388dbccd552ecd",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/8--reply-validation.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/8--reply-validation.md",
+            "destination_sha256": "46a4787f0084e802d942a42d75082153a2b71ed05e0ce28bc4ede47d30669881"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/9--lookup-and-reverse.md",
+            "sha256": "5368c2eba18ca673aea162d841b3314baece86e2491d0ab2b7d01998ccc91b47",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/9--lookup-and-reverse.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/4--the-engine/9--lookup-and-reverse.md",
+            "destination_sha256": "2c83611a2e22344a5b6ff5cd26183b12e1d178102fecfd4f1e32a22d3a57249f"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/5--the-native-socket/1--framing-and-limits.md",
+            "sha256": "be6e0323eec58cdae2763530f9d914ef7f5199eafb5f96199edef57d7a2649f4",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/5--the-native-socket/1--framing-and-limits.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/5--the-native-socket/1--framing-and-limits.md",
+            "destination_sha256": "7cf6f0192ffcded1ed9c7d6cce67c5938ec13c82457282c50189f572a11a278e"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/5--the-native-socket/2--the-access-check.md",
+            "sha256": "4627fb9473ee8382cb9b9e17248efd77f9368245fbbd40b61d077b4099cc1e1e",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/5--the-native-socket/2--the-access-check.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/5--the-native-socket/2--the-access-check.md",
+            "destination_sha256": "e40aabfda8b321e2157d9cd9754117bb4e71f3b203f6e5106a1bd95bf6be5e2c"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/5--the-native-socket/3--requests.md",
+            "sha256": "41c36554b951f86ba2d35fd3c5a3a3e971d1fa74d1328765a24c1f0fe031eb09",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/5--the-native-socket/3--requests.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/5--the-native-socket/3--requests.md",
+            "destination_sha256": "83348f755a42aed6921388a5d205d805e0c84040ea2f01019c9e76f8d58792d3"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/6--the-stub-listener/1--receiving-queries.md",
+            "sha256": "92fbdd7ca7432bb98e277521013f137c7eb4486efc912e1ea9dfd6dde6201109",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/6--the-stub-listener/1--receiving-queries.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/6--the-stub-listener/1--receiving-queries.md",
+            "destination_sha256": "bf76517853838f3c7fbe5538f048ce84d09914ee2e7223c2bab3a84be19346b0"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/6--the-stub-listener/2--rendering-replies.md",
+            "sha256": "af7f53a764d48ffea9d25af97d803991642bf6f661826c0ac4f3d21e529d7c5c",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/6--the-stub-listener/2--rendering-replies.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/6--the-stub-listener/2--rendering-replies.md",
+            "destination_sha256": "88dee961a00fe977ff99565ce069a1327bfba0795dd50411b718dffdd7632273"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/7--the-nss-shim/1--the-module.md",
+            "sha256": "abdf200b609a00ee300c662c7d4c4e2cc26dfcb47c97d7c257295e484a9117a1",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/7--the-nss-shim/1--the-module.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/7--the-nss-shim/1--the-module.md",
+            "destination_sha256": "c4b905b7ef474410b975a2f495bf6148a5e32af9d999a35fe798bee4b791abf2"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/7--the-nss-shim/2--forward-lookups.md",
+            "sha256": "e920cea0bb05ba923fb40da0d01008827be0cdc8354bfd4b8e9e037f57852112",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/7--the-nss-shim/2--forward-lookups.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/7--the-nss-shim/2--forward-lookups.md",
+            "destination_sha256": "a729d398209136d23a14a7cfb8add67f75c768fc394d5ef773a337a44a4d721c"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/7--the-nss-shim/3--reverse-lookups.md",
+            "sha256": "ede573dfb1809bec54f4db12ed1315f144bae24ea8e18da3bbeefb39bf9118cc",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/7--the-nss-shim/3--reverse-lookups.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/7--the-nss-shim/3--reverse-lookups.md",
+            "destination_sha256": "7bba6bb086f239903c9730c6c892908c16ce1595bb4f0bec43802bdaa9090b61"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/8--the-resolv-command/1--the-resolv-command.md",
+            "sha256": "a2430f30d84cdfedd4299038afa6e2692e3b83486af97c0d5bf57e7170df87ae",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/8--the-resolv-command/1--the-resolv-command.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/8--the-resolv-command/1--the-resolv-command.md",
+            "destination_sha256": "b064631aae56a6816eeb16901431d3e3bdbbfa3121e6a138e56d5b947fea454f"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/1--reading-resolvds-state.md",
+            "sha256": "8e9bab339fc354bebc9b60f0dc4d4b10d558f69e8cdfa8ddcdebf19097f7a342",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/1--reading-resolvds-state.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/1--reading-resolvds-state.md",
+            "destination_sha256": "b5369b5f11aee9892fd7aaf6fa5ae70faa0b5b3d8d0a1dee4500648de1afd917"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/2--names-do-not-resolve.md",
+            "sha256": "aebd8a9a0b5e678dde70f7a102828c767099f0fbbb4034c514a19212252d580b",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/2--names-do-not-resolve.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/2--names-do-not-resolve.md",
+            "destination_sha256": "4c01a1143801dc66e42c39cb14207b287b2adbfcbe7492d550d99e8cb3aac0d9"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/3--resolvd-cannot-be-reached.md",
+            "sha256": "06cdfd47f790082bf9f2b7c360873007e951c1c864ae241d03a1802d4ba16071",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/3--resolvd-cannot-be-reached.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/3--resolvd-cannot-be-reached.md",
+            "destination_sha256": "06cdfd47f790082bf9f2b7c360873007e951c1c864ae241d03a1802d4ba16071"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/4--stalls-and-loops.md",
+            "sha256": "4a92069c3635d72013ee3a8f4fb139ecf6521cbd34e099c23a6ba50f8439c691",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/4--stalls-and-loops.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/9--failure-modes/4--stalls-and-loops.md",
+            "destination_sha256": "cb9c750867ce53c4aff385d67fe65cbbb6585c34ebafa40acd5770ee3b55c6d1"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/a1--constants-and-limits.md",
+            "sha256": "22fa99c382cf799794b344945da051dc71ac7bef40f57dd4ba06d1c65aaa1071",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/a1--constants-and-limits.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/a1--constants-and-limits.md",
+            "destination_sha256": "cda29d60822df0d745e2d6548935b44a8143c29a66a7da3428510b54b5e5d233"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/a2--registry-keys.md",
+            "sha256": "508b28c3e15091628aeff2e59bdf177fa4f1e8b17065d048994a5939a0db207c",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/a2--registry-keys.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/a2--registry-keys.md",
+            "destination_sha256": "f90ebbf8fdf480a8668599c47d880e9c2552596dbe8bc6533a901583d2b21ab0"
+        },
+        {
+            "source": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/trail.toml",
+            "sha256": "5519e10b8c705e2ae5e49d64dfa4ebb2bbf1e354f0b9ea501c2a116a9b977068",
+            "destination": "peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/trail.toml",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/3--advanced-peios.antho/300--trms.shelf/800--resolvd.book/trail.toml",
+            "destination_sha256": "5519e10b8c705e2ae5e49d64dfa4ebb2bbf1e354f0b9ea501c2a116a9b977068"
+        },
+        {
+            "source": "peios.product/0--using-peios.antho/100--fundamentals.shelf/300--networking.topic/400--name-resolution.md",
+            "sha256": "f5f9b9a2f35d43004a931231240440adca1e29eabe880214f191748a3ad24b41",
+            "destination": "peios.product/0--using-peios.antho/100--fundamentals.shelf/300--networking.topic/400--name-resolution.md",
+            "status": "reviewed, rewritten, linted, and verified in the Panorama publication context",
+            "original_archive": "docs/archive/learn-staging/peios.product/0--using-peios.antho/100--fundamentals.shelf/300--networking.topic/400--name-resolution.md",
+            "destination_sha256": "4b434b96cb55f6cf8f8f65c4073315c55cfa433656f26f81e1dbc8567f04a3f8"
+        }
+    ],
+    "cross_component_material": "Retained in learn-staging; only the explicitly listed component-owned files moved."
+}

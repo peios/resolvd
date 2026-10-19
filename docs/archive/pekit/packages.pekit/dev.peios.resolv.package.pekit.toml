@@ -1,0 +1,17 @@
+# Stateless operator client. It owns no service state and speaks the public
+# native resolver protocol, so an alternative conforming resolver can satisfy
+# its runtime endpoint without a package-level daemon dependency.
+[package]
+name        = "dev.peios.resolv"
+description = "Peios name-resolution operator client"
+# resolv links only this workspace's own crates; build.main's
+# collect-rust-licences --check holds this to what its closure declares.
+license     = "MIT"
+
+
+
+[files]
+":usr/share/man/man1/resolv.1.gz" = "usr/share/man/man1/resolv.1.gz"
+"@source:LICENSE" = "usr/share/licenses/dev.peios.resolv/LICENSE"
+":usr/bin/resolv"  = "usr/bin/resolv"
+":licenses/resolv/**" = "usr/share/licenses/dev.peios.resolv/third-party"
