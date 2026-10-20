@@ -1,7 +1,7 @@
 [
-    "trail: warning: /peios/using-peios/networking/name-resolution: link '~peios/advanced-peios/netd/failure-modes/failure-modes' matches no page in product 'peios'",
-    "trail: warning: /peios/using-peios/networking/name-resolution: link '~peios/advanced-peios/netd/what-netd-publishes/the-resolver-channel' matches no page in product 'peios'",
-    "trail: warning: /peios/using-peios/networking/name-resolution: link '~peios/networking/configuring-profiles' matches no page in product 'peios'",
-    "trail: warning: /peios/using-peios/networking/name-resolution: related link: link '~peios/networking/configuring-profiles' matches no page in product 'peios'",
-    "trail: warning: /peios/using-peios/networking/name-resolution: related link: link '~peios/networking/the-net-command' matches no page in product 'peios'"
+  "trail: warning: /peios/using-peios/networking/name-resolution: link '~peios/networking/configuring-profiles' matches no page in product 'peios'",
+  "trail: warning: /peios/using-peios/networking/name-resolution: link '~peios/reference/netd/failure-modes/failure-modes' matches no page in product 'peios'",
+  "trail: warning: /peios/using-peios/networking/name-resolution: link '~peios/reference/netd/what-netd-publishes/the-resolver-channel' matches no page in product 'peios'",
+  "trail: warning: /peios/using-peios/networking/name-resolution: related link: link '~peios/networking/configuring-profiles' matches no page in product 'peios'",
+  "trail: warning: /peios/using-peios/networking/name-resolution: related link: link '~peios/networking/the-net-command' matches no page in product 'peios'"
 ]

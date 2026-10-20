@@ -5,7 +5,7 @@ description: Identify why a name fails and verify the resolver's chosen path.
 related:
   - peios/networking/the-net-command
   - peios/networking/configuring-profiles
-  - peios/advanced-peios/resolvd/the-nss-shim/the-module
+  - peios/reference/resolvd/the-nss-shim/the-module
 ---
 
 Use `resolv` to identify whether a name is missing, resolution is unavailable,
@@ -48,7 +48,7 @@ settings.
 The final command bypasses cache lookup but can store the resulting answer.
 Read the reported outcome, source, server, and interface. If connecting to
 an address also fails, investigate
-[connectivity](~peios/advanced-peios/netd/failure-modes/failure-modes).
+[connectivity](~peios/reference/netd/failure-modes/failure-modes).
 
 ## Where the servers come from
 
@@ -83,9 +83,9 @@ contribute domains, including scopes without servers. A qualifying exclusive
 scope supplies only its own domains. With no applicable domain, a bare name
 is answered locally as not found and is never sent upstream unchanged.
 
-See the [routing](~peios/advanced-peios/resolvd/the-engine/scope-routing) and
+See the [routing](~peios/reference/resolvd/the-engine/scope-routing) and
 [search
-expansion](~peios/advanced-peios/resolvd/the-engine/single-label-expansion)
+expansion](~peios/reference/resolvd/the-engine/single-label-expansion)
 chapters for tie-breaking and failure behavior.
 
 ## Static names
@@ -103,7 +103,7 @@ resolv reverse 10.0.2.9
 Verify both directions. Static names apply without a cache flush after the
 configuration is read. Synthetic localhost names take precedence over static
 names. The [synthetic-name
-chapter](~peios/advanced-peios/resolvd/the-engine/synthetic-names)
+chapter](~peios/reference/resolvd/the-engine/synthetic-names)
 describes hostname, reverse, and `.local` handling.
 
 ## The `resolv` command
@@ -140,7 +140,7 @@ A restart replaces resolvd's stale socket and clears transient state.
 Do not remove its runtime directory as a routine diagnostic step. Inspect
 permissions and the exact startup error using the
 [failure
-guide](~peios/advanced-peios/resolvd/failure-modes/resolvd-cannot-be-reached).
+guide](~peios/reference/resolvd/failure-modes/resolvd-cannot-be-reached).
 
 ## Three doors
 
@@ -162,8 +162,8 @@ callers use the same policy; native query access controls permission to ask.
 
 - PSPU, Name Resolution Interface, defines the protocol contract.
   defines request and outcome contracts.
-- [resolvd TRM](~peios/advanced-peios/resolvd/introduction/overview)
+- [resolvd TRM](~peios/reference/resolvd/introduction/overview)
   explains the implementation and its limits.
 - [netd's resolver
-channel](~peios/advanced-peios/netd/what-netd-publishes/the-resolver-channel)
+channel](~peios/reference/netd/what-netd-publishes/the-resolver-channel)
   describes the live network information sent to resolvd.

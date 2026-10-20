@@ -77,7 +77,7 @@ on `Machine\System\Network\Dns`, or Network Manager's DNS **Settings**:
   search domains are not listed in that status output: verify them with a
   lookup of the intended bare name. No restart is normally needed. A failed
   registry watch or a malformed value can prevent the
-  expected change; the [registry chapter](~peios/advanced-peios/resolvd/startup-and-configuration/registry-configuration)
+  expected change; the [registry chapter](~peios/reference/resolvd/startup-and-configuration/registry-configuration)
   describes the log messages.
 
 ### Verify which interface gets a name
@@ -102,8 +102,8 @@ A single-label name such as `printer` is asked only after a search domain
 is appended. With no applicable domain it is not found locally and no
 query leaves the machine. A name with a dot between labels is not
 expanded. Use a fully qualified name to check whether the problem is the
-search list. The [scope-routing](~peios/advanced-peios/resolvd/the-engine/scope-routing)
-and [single-label expansion](~peios/advanced-peios/resolvd/the-engine/single-label-expansion)
+search list. The [scope-routing](~peios/reference/resolvd/the-engine/scope-routing)
+and [single-label expansion](~peios/reference/resolvd/the-engine/single-label-expansion)
 chapters contain the full selection and tie-breaking algorithms.
 
 ## Static names
@@ -127,7 +127,7 @@ resolv reverse 10.0.2.9
 An exact static name wins over DNS at every resolver entry point, including
 programs using the DNS stub. Static-name changes are live and need no cache
 flush. `localhost`, the machine's own hostname and their reverses are
-answered without configuration. The [synthetic-name chapter](~peios/advanced-peios/resolvd/the-engine/synthetic-names)
+answered without configuration. The [synthetic-name chapter](~peios/reference/resolvd/the-engine/synthetic-names)
 documents precedence, record types and reverse-name collisions.
 
 `.local` names are not sent upstream. mDNS is not implemented and LLMNR
@@ -152,7 +152,7 @@ grants. Registry edits require separate write access.
 Exit 0 means found or a successful status/flush, 2 means `notfound`, and 3
 means `unavailable`. Exit 1 includes an unreachable daemon, access denial,
 protocol error or bad type/address; unrecognized usage exits 64. See the
-[command reference](~peios/advanced-peios/resolvd/the-resolv-command/the-resolv-command)
+[command reference](~peios/reference/resolvd/the-resolv-command/the-resolv-command)
 for accepted record types and exact output.
 
 Unlike `dig`, `resolv query` reports cache use and the chosen interface.
@@ -171,12 +171,12 @@ no DNSSEC validation.
 | Server marked `(demoted)` | It recently failed. It is tried after healthy servers, not permanently disabled. Check the server and network path. |
 | Wrong or stale answer | Compare a `--no-cache` query. A static name can override DNS; administrators can flush the cache if needed. |
 | `resolv: access denied` | Check the native control object's query right. It is separate from reachability of the DNS stub. |
-| Daemon unreachable or repeated failures | Read `evctl 'LOGS FROM resolvd SINCE 1h ago TAKE 40'` and the [failure-mode guide](~peios/advanced-peios/resolvd/failure-modes/resolvd-cannot-be-reached). |
+| Daemon unreachable or repeated failures | Read `evctl 'LOGS FROM resolvd SINCE 1h ago TAKE 40'` and the [failure-mode guide](~peios/reference/resolvd/failure-modes/resolvd-cannot-be-reached). |
 
 On restart, resolvd removes its stale socket and binds a new one. Its
 directory and socket descriptors retain full access for its own service
 identity so this replacement can succeed. See the
-[socket chapter](~peios/advanced-peios/resolvd/startup-and-configuration/sockets).
+[socket chapter](~peios/reference/resolvd/startup-and-configuration/sockets).
 If startup reports a permission error, inspect the actual descriptors and
 logs; do not delete the runtime directory merely because a restart occurred.
 
@@ -197,8 +197,8 @@ The glibc hosts database is fixed to `libnss_peios_net.so.2`, without
 DNS clients, including Go and musl programs, at the stub. A bare name gets
 the same search-domain treatment through each route. Native replies also
 carry TTLs, source and validation state. See the
-[resolver overview](~peios/advanced-peios/resolvd/introduction/overview)
-and [name-resolution interface](~peios/advanced-peios/pspu/name-resolution-interface/scope-and-roles)
+[resolver overview](~peios/reference/resolvd/introduction/overview)
+and [name-resolution interface](~peios/reference/pspu/name-resolution-interface/scope-and-roles)
 for the entry-point contracts.
 
 ## What is not there yet
@@ -209,9 +209,9 @@ allowed callers use the same resolution policy.
 
 ## Going deeper
 
-- [Name resolution interface](~peios/advanced-peios/pspu/name-resolution-interface/scope-and-roles):
+- [Name resolution interface](~peios/reference/pspu/name-resolution-interface/scope-and-roles):
   requests, outcomes and entry-point contracts.
-- [resolvd technical reference manual](~peios/advanced-peios/resolvd/introduction/overview):
+- [resolvd technical reference manual](~peios/reference/resolvd/introduction/overview):
   cache behavior, routing, server demotion, retries, wire handling and limits.
-- [netd's resolver channel](~peios/advanced-peios/netd/what-netd-publishes/the-resolver-channel):
+- [netd's resolver channel](~peios/reference/netd/what-netd-publishes/the-resolver-channel):
   which profile and offered DNS facts reach resolvd.
