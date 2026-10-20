@@ -3,8 +3,8 @@ title: Diagnosing Name Resolution
 type: how-to
 description: Identify why a name fails and verify the resolver's chosen path.
 related:
-  - peios/networking/the-net-command
-  - peios/networking/configuring-profiles
+  - peios/network-configuration/the-net-command
+  - peios/network-configuration/configuring-profiles
   - peios/reference/resolvd/the-nss-shim/the-module
 ---
 
@@ -57,7 +57,7 @@ netd sends resolvd each interface's servers, domains, and addresses as a
 intended interface profile.
 
 Use [Configuring
-Profiles](~peios/networking/configuring-profiles#taking-the-offer-with-adjustments)
+Profiles](~peios/network-configuration/configuring-profiles#taking-the-offer-with-adjustments)
 to change offered or explicit interface DNS settings. A profile change can
 restart address clients; follow that guide's recovery checks.
 
