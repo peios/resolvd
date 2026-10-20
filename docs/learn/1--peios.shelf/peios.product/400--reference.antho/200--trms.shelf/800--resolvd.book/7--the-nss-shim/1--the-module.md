@@ -76,7 +76,7 @@ record has the same result. Explicit `notfound` remains `HOST_NOT_FOUND`.
 [*nss-module.found-without-family-is-no-data]
 
 <!-- Keep the published reference identifier. -->
-<!-- lint-disable-next-line spelling words -->
+<!-- lint-disable-next-line spelling -->
 ### `AF_UNSPEC` [*nss-module.af-unspec-only-via-gethostbyname4]
 
 `AF_UNSPEC` is accepted only by `gethostbyname4_r`, which always asks

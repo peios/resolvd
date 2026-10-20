@@ -100,13 +100,13 @@ socket abandons the question before ready upstream replies are processed:
 all of its transactions are canceled, including both families of an
 `any` lookup. Other questions continue normally.
 <!-- Keep the published reference identifier. -->
-<!-- lint-disable-next-line spelling words -->
+<!-- lint-disable-next-line spelling -->
 [*engine-flow.departed-asker-transactions-cancelled]
 
 Replies to canceled transactions are ignored; they do not populate the
 cache. Answers already cached before cancellation remain cached.
 <!-- Keep the published reference identifier. -->
-<!-- lint-disable-next-line spelling words -->
+<!-- lint-disable-next-line spelling -->
 [*engine-flow.cancelled-replies-not-cached]
 
 An abandoned question is removed from the waiting clients and no answer

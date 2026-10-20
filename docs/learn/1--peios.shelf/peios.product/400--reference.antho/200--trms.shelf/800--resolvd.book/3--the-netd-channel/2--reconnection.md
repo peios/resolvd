@@ -71,7 +71,7 @@ exactly as before, and the servers in those scopes are still asked.
 `status` reports `netd` as `false` (§5.3).
 
 <!-- Keep the published reference identifier. -->
-<!-- lint-disable-next-line spelling words -->
+<!-- lint-disable-next-line spelling -->
 ## Before the first snapshot [*netd-reconnect.no-snapshot-yet-behaviour]
 
 When resolvd has never received a snapshot it has no scopes. It answers
