@@ -1,5 +1,13 @@
 # resolvd's programs, its C client library and its NSS module, each crate
 # compiled on its own (see the rust library's `workspace`), for glibc.
+#
+# resolvd is a library as well as a workspace: a workspace whose crates
+# depend on `resolvd-client` gives it libresolvd, which it links, and gives
+# its programs libresolvd when they run:
+#
+#     import "github.com/peios/resolvd"
+#     rust.workspace(..., crates = [...peios_rs.crate_settings(), ...resolvd.crate_settings()])
+#     rust.run_test(test, given = [...peios_rs.runtime(), ...resolvd.runtime()], env = resolvd.runtime_env())
 import "github.com/gcslib/clang"
 import "github.com/gcslib/rust"
 import "github.com/peios/peios-rs" as peios_rs
@@ -7,16 +15,35 @@ import "github.com/peios/peios-rs" as peios_rs
 # Where `resolvd-client`'s build script is told libresolvd is.
 let LIBRESOLVD = "/opt/resolvd/lib"
 
-# The resolvd workspace, planned. `resolvd-client` links the C client
-# library, libresolvd, so it, and `resolv`, are given it.
-def crates() -> rust.RustWorkspace {
-    = planned([
+# The settings of `resolvd-client`: the C client library, libresolvd, by
+# its link name, where its build script is told it is, for it and
+# everything that depends on it.
+def crate_settings() -> List<rust.CrateSettings> {
+    = [
         {
             package = "resolvd-client"
             env = [{key = "PEIOS_RESOLVD_LIB_DIR"; value = LIBRESOLVD}]
             given = [{at = "{LIBRESOLVD}/libresolvd.so"; place = build libresolvd()}]
         },
-    ])
+    ]
+}
+
+# What a program that links libresolvd loads: libresolvd, by its soname,
+# where `resolvd-client` links it from.
+def runtime() -> List<{at: String, place: Dir | File}> {
+    = [{at = "{LIBRESOLVD}/libresolvd.so.1"; place = build libresolvd()}]
+}
+
+# Where such a program finds libresolvd, and libpeios, which it loads (see
+# peios-rs's `runtime_env`).
+def runtime_env() -> List<Entry<String>> {
+    = [{key = "LD_LIBRARY_PATH"; value = "/opt/peios/lib:{LIBRESOLVD}"}]
+}
+
+# The resolvd workspace, planned. `resolvd-client` links the C client
+# library, libresolvd, so it, and `resolv`, are given it.
+def crates() -> rust.RustWorkspace {
+    = planned(crate_settings())
 }
 
 # The workspace without `resolvd-client`'s settings, which libresolvd is

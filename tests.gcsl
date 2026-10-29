@@ -20,13 +20,13 @@ let MEMBERS = ["libresolvd", "resolvd-client", "resolvd-abi", "dns", "resolvd-co
 let LIBRESOLVD = "/opt/resolvd/lib"
 
 # Where the tests find the shared libraries they load.
-let LIBRARIES = [{key = "LD_LIBRARY_PATH"; value = "/opt/peios/lib:{LIBRESOLVD}"}]
+let LIBRARIES = runtime_env()
 
 # What every test is given: libpeios, by its soname, which a program that
 # links it loads (see peios-rs's `runtime`), and libresolvd, by its soname,
 # which `resolvd-client` loads.
 def loaded() -> List<{at: String, place: Dir | File}> {
-    = [...peios_rs.runtime(), {at = "{LIBRESOLVD}/libresolvd.so.1"; place = build libresolvd()}]
+    = [...peios_rs.runtime(), ...runtime()]
 }
 
 # Runs each of `tests`, given `given`.
