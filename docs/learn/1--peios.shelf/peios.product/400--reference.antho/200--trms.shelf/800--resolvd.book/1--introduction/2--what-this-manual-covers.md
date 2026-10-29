@@ -26,7 +26,7 @@ Each package has a matching `-debuginfo` package, and
 
 ## The source tree
 
-The source is one Cargo workspace with native Bazel targets, and the split is
+The source is one Cargo workspace, built with pekit, and the split is
 visible in
 what each part of the system can do:
 

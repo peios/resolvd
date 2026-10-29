@@ -1,0 +1,60 @@
+# resolvd's programs, its C client library and its NSS module, each crate
+# compiled on its own (see the rust library's `workspace`), for glibc.
+import "github.com/gcslib/clang"
+import "github.com/gcslib/rust"
+import "github.com/peios/peios-rs" as peios_rs
+
+# Where `resolvd-client`'s build script is told libresolvd is.
+let LIBRESOLVD = "/opt/resolvd/lib"
+
+# The resolvd workspace, planned. `resolvd-client` links the C client
+# library, libresolvd, so it, and `resolv`, are given it.
+def crates() -> rust.RustWorkspace {
+    = planned([
+        {
+            package = "resolvd-client"
+            env = [{key = "PEIOS_RESOLVD_LIB_DIR"; value = LIBRESOLVD}]
+            given = [{at = "{LIBRESOLVD}/libresolvd.so"; place = build libresolvd()}]
+        },
+    ])
+}
+
+# The workspace without `resolvd-client`'s settings, which libresolvd is
+# built from: libresolvd does not link itself.
+def unlinked() -> rust.RustWorkspace {
+    = planned([])
+}
+
+# The resolvd workspace, planned, with `extra`, settings of further
+# packages. `peios-sys` binds libpeios with bindgen and links it, so it,
+# and every crate that depends on it, is given what peios-rs's library
+# says it needs: libpeios and its headers, built from the Peios SDK's own
+# files.
+fn planned(extra: List<rust.CrateSettings>) -> rust.RustWorkspace {
+    = rust.workspace(
+        dir("."),
+        rust.vendored(file("Cargo.lock")),
+        crates = [...peios_rs.crate_settings(), ...extra],
+        libclang = [clang.libclang_18()],
+    )
+}
+
+# The name-resolution daemon.
+def build resolvd() {
+    = rust.bin(crates(), "resolvd")
+}
+
+# The resolution command, a client of resolvd's socket.
+def build resolv() {
+    = rust.bin(crates(), "resolv")
+}
+
+# The C client library, `libresolvd.so.1` by its soname.
+def build libresolvd() {
+    = rust.library(unlinked(), "libresolvd")
+}
+
+# The NSS module glibc loads by its name, `libnss_peios_net.so.2`.
+def build nss() {
+    = rust.library(crates(), "nss_peios_net")
+}
