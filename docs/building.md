@@ -108,6 +108,25 @@ build whose `Cargo.lock` takes peios-rs's crates at another commit than
 built with always agree. The other Peios daemons take the same peios-rs
 commit.
 
+## Building against resolvd
+
+resolvd is a GCSL library as well as a workspace. A workspace whose crates
+depend on `resolvd-client` gives it libresolvd, which it links, and gives
+its programs libresolvd, and the libpeios it loads, when they run:
+
+```text
+import "github.com/peios/peios-rs" as peios_rs
+import "github.com/peios/resolvd"
+
+rust.workspace(..., crates = [...peios_rs.crate_settings(), ...resolvd.crate_settings()])
+rust.run_test(test, given = [...peios_rs.runtime(), ...resolvd.runtime()], env = resolvd.runtime_env())
+```
+
+`pekit lock` pins resolvd's commit in the workspace's `pekit.lock`. The
+rust library fails a build whose `Cargo.lock` takes resolvd's crates at
+another commit than that, so the crate and the libresolvd it links always
+agree.
+
 ## Not built with pekit yet
 
 Packages and builds with the native Peios toolchain, which hardens
