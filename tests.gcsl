@@ -1,0 +1,144 @@
+# resolvd's tests: each member's unit and integration tests, as `cargo test
+# -p` builds them, the C client's ABI, each member's documentation tests,
+# as `cargo test --doc` runs them, and Clippy's checks, as `cargo clippy
+# --all-targets -- -Dwarnings` makes them.
+#
+# A test's own code runs in a hermetic step of its own, so what it plans,
+# builds or fetches is in its parameters' defaults.
+import fs
+import toolchain
+import Toolchain from toolchain
+import "github.com/gcslib/rust"
+import "github.com/peios/peios-rs" as peios_rs
+
+# The members of the workspace, by their packages' names: `nss`'s is
+# `nss_peios_net`.
+# The vendored `netd-core` is netd's to check.
+let MEMBERS = ["libresolvd", "resolvd-client", "resolvd-abi", "dns", "resolvd-core", "resolvd", "resolv", "nss_peios_net"]
+
+# Where libresolvd is placed, as `build.gcsl` places it for `resolvd-client`.
+let LIBRESOLVD = "/opt/resolvd/lib"
+
+# Where the tests find the shared libraries they load.
+let LIBRARIES = [{key = "LD_LIBRARY_PATH"; value = "/opt/peios/lib:{LIBRESOLVD}"}]
+
+# What every test is given: libpeios, by its soname, which a program that
+# links it loads (see peios-rs's `runtime`), and libresolvd, by its soname,
+# which `resolvd-client` loads.
+def loaded() -> List<{at: String, place: Dir | File}> {
+    = [...peios_rs.runtime(), {at = "{LIBRESOLVD}/libresolvd.so.1"; place = build libresolvd()}]
+}
+
+# Runs each of `tests`, given `given`.
+fn ran(tests: List<rust.RustTest>, given: List<{at: String, place: Dir | File}>) -> {} {
+    let each = for test in tests { = rust.run_test(test, given = given, env = LIBRARIES) }
+}
+
+def test libresolvd(
+    tests: List<rust.RustTest> = rust.tests(crates(), "libresolvd"),
+    given: List<{at: String, place: Dir | File}> = loaded(),
+) {
+    = ran(tests, given)
+}
+
+def test resolvd_client(
+    tests: List<rust.RustTest> = rust.tests(crates(), "resolvd-client"),
+    given: List<{at: String, place: Dir | File}> = loaded(),
+) {
+    = ran(tests, given)
+}
+
+def test resolvd_abi(
+    tests: List<rust.RustTest> = rust.tests(crates(), "resolvd-abi"),
+    given: List<{at: String, place: Dir | File}> = loaded(),
+) {
+    = ran(tests, given)
+}
+
+def test dns(
+    tests: List<rust.RustTest> = rust.tests(crates(), "dns"),
+    given: List<{at: String, place: Dir | File}> = loaded(),
+) {
+    = ran(tests, given)
+}
+
+def test resolvd_core(
+    tests: List<rust.RustTest> = rust.tests(crates(), "resolvd-core"),
+    given: List<{at: String, place: Dir | File}> = loaded(),
+) {
+    = ran(tests, given)
+}
+
+def test resolvd(
+    tests: List<rust.RustTest> = rust.tests(crates(), "resolvd"),
+    given: List<{at: String, place: Dir | File}> = loaded(),
+) {
+    = ran(tests, given)
+}
+
+def test resolv(
+    tests: List<rust.RustTest> = rust.tests(crates(), "resolv"),
+    given: List<{at: String, place: Dir | File}> = loaded(),
+) {
+    = ran(tests, given)
+}
+
+def test nss(
+    tests: List<rust.RustTest> = rust.tests(crates(), "nss_peios_net"),
+    given: List<{at: String, place: Dir | File}> = loaded(),
+) {
+    = ran(tests, given)
+}
+
+# The vendored `netd-core`'s, as Bazel ran them.
+def test netd_core(
+    tests: List<rust.RustTest> = rust.tests(crates(), "netd-core"),
+    given: List<{at: String, place: Dir | File}> = loaded(),
+) {
+    = ran(tests, given)
+}
+
+# Each member's documentation tests.
+def test doctests(
+    ran: List<List<{}>> = for each in MEMBERS { = rust.doctests(crates(), each, given = loaded(), env = LIBRARIES) },
+) {}
+
+# Clippy's checks of each member, every warning denied.
+def test clippy(checked: List<List<{}>> = for each in MEMBERS { = rust.clippy(crates(), each, flags = ["-Dwarnings"]) }) {}
+
+# The C client's ABI: a C program that includes its public header and links
+# it calls it, run against libresolvd by its soname.
+def test abi(
+    library: File = build libresolvd(),
+    libpeios: List<{at: String, place: Dir | File}> = peios_rs.runtime(),
+    include: Dir = dir("libresolvd/include"),
+    source: File = file("libresolvd/tests/abi.c"),
+    c: toolchain.CToolchain = toolchain.get(Toolchain::C),
+) {
+    let home = working_dir().path
+    let made = fs.mkdir("{home}/out")
+    let placed: List<{at: String, place: Dir | File | FileSet}> = [
+        {at = "/"; place = c.runtime},
+        {at = "/opt/cc"; place = c.root},
+        {at = "/work/out"; place = dir("{home}/out")},
+        {at = "/work/include"; place = include},
+        {at = "/work/abi.c"; place = source},
+        {at = "{LIBRESOLVD}/libresolvd.so"; place = library},
+        {at = "{LIBRESOLVD}/libresolvd.so.1"; place = library},
+        ...(for each in libpeios { = {at = each.at; place = each.place} }),
+    ]
+    let box = fs.compose(placed).sandbox(cwd = "/work", env = {LD_LIBRARY_PATH = "/opt/peios/lib:{LIBRESOLVD}"})
+    let cc = c.cc.path.strip_prefix(c.root.path)
+    let compiled = box.exec(
+        "/opt/cc{cc}",
+        "-UNDEBUG",
+        "-I/work/include",
+        "/work/abi.c",
+        "-o",
+        "/work/out/abi",
+        "-L{LIBRESOLVD}",
+        "-Wl,-rpath-link,/opt/peios/lib",
+        "-lresolvd",
+    )
+    let ran = box.exec("/work/out/abi")
+}
