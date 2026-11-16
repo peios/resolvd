@@ -27,7 +27,7 @@ libc = "0.2.189"
 # Keep this exact revision identical to netd-core's edge. Cargo rejects two
 # peios-sys packages which both declare links = "peios", and accepting a
 # mutable sibling here would also make the source lock incomplete.
-peios = { git = "https://github.com/peios/peios-rs.git", rev = "4c9c0106550e3b7d8b4a98dfd0d7a5490fcf0116", package = "peios" }
+peios = { git = "https://github.com/peios/peios-rs.git", rev = "3950d35950c46cb3538885b7cf05bde059393def", package = "peios" }
 
 [profile.release]
 codegen-units = 1
